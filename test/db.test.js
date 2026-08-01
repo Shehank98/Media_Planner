@@ -11,25 +11,29 @@ if (url) process.env.DATABASE_URL = url;
 
 let db;
 let adexRepo;
-let tvRepo;
+let micosRepo;
 let aggregate;
 let briefRepo;
 let parseAdexWorkbook;
-let parseGrpWorkbook;
-let parseChannelWorkbook;
-let fixtures;
+let parseMicosWorkbook;
+let parseMediaWatch;
+let fx;
+
+const TABLES = `plan_recommendations, campaign_briefs, tv_programme_ratings,
+  tv_channel_daypart, tv_channel_performance, tv_spot_grp, tv_report_meta,
+  media_watch_spots, tv_channels, adex_data, sync_log`;
 
 before(async () => {
   if (skip) return;
   db = await import('../src/db.js');
   adexRepo = await import('../src/services/adexRepo.js');
-  tvRepo = await import('../src/services/tvRepo.js');
+  micosRepo = await import('../src/services/micosRepo.js');
   aggregate = await import('../src/services/aggregate.js');
   briefRepo = await import('../src/services/briefRepo.js');
   ({ parseAdexWorkbook } = await import('../src/parsers/adexParser.js'));
-  ({ parseGrpWorkbook } = await import('../src/parsers/tvGrpParser.js'));
-  ({ parseChannelWorkbook } = await import('../src/parsers/tvChannelParser.js'));
-  fixtures = await import('./fixtures.js');
+  ({ parseMicosWorkbook } = await import('../src/parsers/micosParser.js'));
+  ({ parseMediaWatch } = await import('../src/parsers/mediaWatchParser.js'));
+  fx = await import('./fixtures.js');
   await db.migrate();
 });
 
@@ -39,189 +43,232 @@ after(async () => {
 
 beforeEach(async () => {
   if (skip) return;
-  await db.query('TRUNCATE plan_recommendations, campaign_briefs, tv_programme_ratings, tv_channels, adex_data, sync_log RESTART IDENTITY CASCADE');
+  await db.query(`TRUNCATE ${TABLES} RESTART IDENTITY CASCADE`);
 });
 
+/** Load all three MICOS fixtures the way the upload route does. */
+async function loadMicos() {
+  const parsed = await Promise.all([
+    parseMicosWorkbook(await fx.micosChannelDetails(), { sourceFile: 'cd.xlsx' }),
+    parseMicosWorkbook(await fx.micosChannelDashboards(), { sourceFile: 'dash.xlsx' }),
+    parseMicosWorkbook(await fx.micosSpotGrp(), { sourceFile: 'grp.xlsx' }),
+  ]);
+  const audience = parsed.map((p) => p.meta.target_audience).find(Boolean);
+  const totals = { programmes: 0, channelPerformance: 0, dayparts: 0, spots: 0 };
+  for (const p of parsed) {
+    const r = await micosRepo.persistMicos(p, { audienceOverride: audience });
+    for (const key of Object.keys(totals)) totals[key] += r[key] ?? 0;
+  }
+  return totals;
+}
+
+async function loadMediaWatch() {
+  const { spots } = await parseMediaWatch(fx.mediaWatchTsv(), { sourceFile: 'mw.tsv' });
+  return micosRepo.persistMediaWatch(spots);
+}
+
+// --- adex ------------------------------------------------------------------
+
 test('adex upsert is idempotent across repeated syncs', { skip }, async () => {
-  const { rows } = await parseAdexWorkbook(await fixtures.adexWorkbook(), { sourceFile: 'a.xlsx' });
+  const { rows } = await parseAdexWorkbook(await fx.adexWorkbook(), { sourceFile: 'a.xlsx' });
 
   await adexRepo.upsertAdexRows(rows);
   const first = await db.query('SELECT count(*)::int AS n FROM adex_data');
-  assert.equal(first.rows[0].n, 4);
+  assert.equal(first.rows[0].n, 3);
 
-  // Re-syncing the same Drive file must update, not duplicate.
   await adexRepo.upsertAdexRows(rows);
   const second = await db.query('SELECT count(*)::int AS n FROM adex_data');
-  assert.equal(second.rows[0].n, 4, 'a second sync of the same file must not duplicate rows');
-});
-
-test('adex upsert refreshes the values on re-sync', { skip }, async () => {
-  const { rows } = await parseAdexWorkbook(await fixtures.adexWorkbook());
-  await adexRepo.upsertAdexRows(rows);
-
-  const revised = rows.map((r) => ({ ...r, tv_spend_000: 9999 }));
-  await adexRepo.upsertAdexRows(revised);
-
-  const { rows: check } = await db.query('SELECT DISTINCT tv_spend_000 FROM adex_data');
-  assert.deepEqual(check.map((r) => r.tv_spend_000), [9999], 'corrected figures overwrite the old ones');
+  assert.equal(second.rows[0].n, 3, 'a second sync of the same file must not duplicate rows');
 });
 
 test('the unique key holds even when product2 is absent', { skip }, async () => {
   // The reason key columns are NOT NULL DEFAULT '': with NULLs, Postgres would
   // treat every row as distinct and the same month would land twice.
   const row = {
-    month: '2024-01-01', advertiser: 'Solo Ltd', brand: 'Solo', product2: '',
+    month: '2021-01-01', advertiser: 'Solo Ltd', brand: 'Solo', product2: '',
     tv_spend_000: 100, total_000: 100,
   };
   await adexRepo.upsertAdexRows([row]);
   await adexRepo.upsertAdexRows([{ ...row, tv_spend_000: 200 }]);
 
-  const { rows } = await db.query("SELECT count(*)::int AS n, max(tv_spend_000) AS spend FROM adex_data WHERE brand = 'Solo'");
+  const { rows } = await db.query(
+    "SELECT count(*)::int AS n, max(tv_spend_000) AS spend FROM adex_data WHERE brand = 'Solo'",
+  );
   assert.equal(rows[0].n, 1, 'one row, not two');
   assert.equal(rows[0].spend, 200);
 });
 
 test('batching inserts more rows than one batch holds', { skip }, async () => {
   const rows = Array.from({ length: 1201 }, (_, i) => ({
-    month: '2024-01-01',
-    advertiser: 'Bulk Co',
-    brand: `Brand ${i}`,
-    product2: 'Std',
-    category: 'Beverages',
-    sector: 'FMCG',
-    tv_spend_000: i,
-    total_000: i,
+    month: '2021-01-01', advertiser: 'Bulk Co', brand: `Brand ${i}`, product2: 'Std',
+    category: 'Not Relavent', sector: 'Other', tv_spend_000: i, total_000: i,
   }));
   await adexRepo.upsertAdexRows(rows);
-  const { rows: check } = await db.query("SELECT count(*)::int AS n FROM adex_data WHERE advertiser = 'Bulk Co'");
+  const { rows: check } = await db.query(
+    "SELECT count(*)::int AS n FROM adex_data WHERE advertiser = 'Bulk Co'",
+  );
   assert.equal(check[0].n, 1201, '1201 rows across three 500-row batches');
 });
 
-test('TVR upload persists channels and ratings, and re-upload does not duplicate', { skip }, async () => {
-  const { channels } = await parseChannelWorkbook(await fixtures.channelWorkbook());
-  const { ratings } = await parseGrpWorkbook(await fixtures.grpWorkbookWide());
+// --- MICOS -----------------------------------------------------------------
 
-  const first = await tvRepo.persistTvUpload({ channels, ratings });
-  assert.ok(first.ratingsUpserted > 0);
+test('a MICOS upload lands in the right five tables', { skip }, async () => {
+  await loadMicos();
 
-  const countRatings = async () =>
-    (await db.query('SELECT count(*)::int AS n FROM tv_programme_ratings')).rows[0].n;
-  const afterFirst = await countRatings();
+  const counts = async (table) =>
+    (await db.query(`SELECT count(*)::int AS n FROM ${table}`)).rows[0].n;
 
-  await tvRepo.persistTvUpload({ channels, ratings });
-  assert.equal(await countRatings(), afterFirst, 're-uploading the same workbook must upsert, not duplicate');
+  assert.equal(await counts('tv_programme_ratings'), 4, 'C1 top programmes');
+  assert.equal(await counts('tv_channel_performance'), 2, 'A1 channel summary');
+  assert.equal(await counts('tv_channel_daypart'), 7, 'A2 days + A3 day-parts share one table');
+  assert.equal(await counts('tv_spot_grp'), 3, 'spot-level GRP');
+  assert.ok(await counts('tv_channels') >= 3, 'channels resolved across all sheets');
 });
 
-test('ratings for a channel missing from the master list still land', { skip }, async () => {
-  const { ratings } = await parseGrpWorkbook(await fixtures.grpWorkbookWide());
-  // No channel workbook at all - the ratings name their own channels.
-  await tvRepo.persistTvUpload({ channels: [], ratings });
+test('re-uploading the same MICOS export does not duplicate', { skip }, async () => {
+  await loadMicos();
+  const before = (await db.query('SELECT count(*)::int AS n FROM tv_programme_ratings')).rows[0].n;
+  await loadMicos();
+  const after = (await db.query('SELECT count(*)::int AS n FROM tv_programme_ratings')).rows[0].n;
+  assert.equal(after, before, 'a survey re-uploaded is the same survey');
+});
 
+test('the audience carries across to the export that omits it', { skip }, async () => {
+  // The real spot-level export has no "Custom TG" line. Without the carry-over
+  // its rows would be stored against a blank audience and never match a brief.
+  await loadMicos();
   const { rows } = await db.query(
-    `SELECT c.channel_name, count(r.id)::int AS n
-       FROM tv_channels c JOIN tv_programme_ratings r ON r.channel_id = c.id
-      GROUP BY c.channel_name ORDER BY c.channel_name`,
+    'SELECT DISTINCT target_audience FROM tv_spot_grp ORDER BY 1',
   );
-  assert.ok(rows.length >= 3, 'stub channels are created for ratings-only uploads');
+  assert.deepEqual(rows.map((r) => r.target_audience), ['Meera 16-45']);
 });
 
-test('aggregation scopes competitors to the brand category and excludes own brand', { skip }, async () => {
-  const { rows } = await parseAdexWorkbook(await fixtures.adexWorkbook());
-  await adexRepo.upsertAdexRows(rows);
-
-  const brief = await briefRepo.insertBrief({
-    brand: 'Alpha Cola', advertiser: 'Alpha Ltd', target_audience: 'Females 15-40',
-    language: 'Sinhala', period_start: '2024-04-01', period_end: '2024-06-30',
-    budget_lkr_lakhs: 250, medium_split: { tv: 70, radio: 20, press: 10 },
-  });
-
-  const data = await aggregate.buildAggregatedData(brief);
-  assert.equal(data.scope.category, 'Beverages', 'category resolved from the brand');
-
-  const brands = new Set(data.competitor_spend_by_quarter.map((r) => r.brand));
-  assert.ok(brands.has('Beta Fizz'), 'the competitor is present');
-  assert.ok(!brands.has('Alpha Cola'), 'the brief brand is excluded from its own competitor set');
-
-  assert.ok(data.own_brand_trend.length > 0, 'own-brand trend is reported separately');
-  assert.match(data.own_brand_trend[0].quarter, /^\d{4}-Q[1-4]$/);
+test('day rows and day-part rows stay distinguishable in one table', { skip }, async () => {
+  await loadMicos();
+  const { rows } = await db.query(`
+    SELECT count(*) FILTER (WHERE day_of_week <> '') AS days,
+           count(*) FILTER (WHERE time_of_day <> '') AS bands
+      FROM tv_channel_daypart`);
+  assert.equal(rows[0].days, 4, 'A2 rows');
+  assert.equal(rows[0].bands, 3, 'A3 rows');
 });
 
-test('aggregation returns programmes for the target audience', { skip }, async () => {
-  const { channels } = await parseChannelWorkbook(await fixtures.channelWorkbook());
-  const { ratings } = await parseGrpWorkbook(await fixtures.grpWorkbookLong());
-  await tvRepo.persistTvUpload({ channels, ratings });
+test('media watch spots upsert without duplicating', { skip }, async () => {
+  const first = await loadMediaWatch();
+  assert.equal(first.spots, 3);
+  await loadMediaWatch();
+  const { rows } = await db.query('SELECT count(*)::int AS n FROM media_watch_spots');
+  assert.equal(rows[0].n, 3);
+});
 
-  const brief = await briefRepo.insertBrief({
-    brand: 'Alpha Cola', target_audience: 'Females 15-40', language: 'Sinhala',
+// --- aggregation -----------------------------------------------------------
+
+async function sampleBrief(overrides = {}) {
+  return briefRepo.insertBrief({
+    brand: 'Sunsilk',
+    advertiser: 'Unilever Sri Lanka Limited',
+    target_audience: 'Meera 16-45',
+    language: 'Sinhala',
+    period_start: '2026-08-01',
+    period_end: '2026-09-30',
+    budget_lkr_lakhs: 250,
+    medium_split: { tv: 70, radio: 20, press: 10 },
+    ...overrides,
   });
-  const data = await aggregate.buildAggregatedData(brief);
+}
 
-  assert.ok(data.programme_ratings.length > 0);
-  assert.ok(
-    data.programme_ratings.every((p) => /female/i.test(p.target_audience)),
-    'only the requested audience is returned',
+test('aggregation ranks programmes and joins observed cost', { skip }, async () => {
+  await loadMicos();
+  await loadMediaWatch();
+  const data = await aggregate.buildAggregatedData(await sampleBrief());
+
+  assert.equal(data.scope.audience_panel, 'Meera 16-45');
+  assert.equal(data.scope.audience_matched, true);
+
+  const ratings = data.programme_ratings.map((p) => Number(p.avg_rating));
+  assert.deepEqual(ratings, [...ratings].sort((a, b) => b - a), 'ranked by rating');
+
+  // The media watch fixture observed a TV spot in PAATA KURULLO at 145,000.
+  const top = data.programme_ratings.find((p) => p.programme_name === 'PAATA KURULLO');
+  assert.equal(Number(top.observed_avg_cost), 145000, 'cost joined from media watch');
+  assert.ok(top.cost_per_rating_point > 0, 'cost per rating point computed in SQL, not by the model');
+});
+
+test('aggregation reports the strongest day and day-part per channel', { skip }, async () => {
+  await loadMicos();
+  const data = await aggregate.buildAggregatedData(await sampleBrief());
+
+  const hiruBest = data.best_days.find((d) => d.channel_name === 'HIRU TV' && d.day_rank === 1);
+  assert.equal(hiruBest.day_of_week, 'Tuesday', 'highest ratings day is ranked first');
+  assert.equal(Number(hiruBest.ratings), 23787.48);
+  assert.equal(typeof hiruBest.day_rank, 'number', 'bigint rank arrives as a number, not a string');
+
+  const band = data.best_dayparts.find((d) => d.channel_name === 'DERANA TV' && d.band_rank === 1);
+  assert.equal(band.time_of_day, 'Evening Peak (1900 - 2059)');
+});
+
+test('aggregation reports who is already buying each programme', { skip }, async () => {
+  await loadMicos();
+  const data = await aggregate.buildAggregatedData(await sampleBrief());
+
+  const paata = data.competitor_spot_pressure.find((p) => p.programme_name === 'PAATA KURULLO');
+  assert.ok(paata, 'programme-level competitive read is available');
+  assert.equal(paata.spots, 2);
+  assert.ok(paata.top_brands.includes('Dove'));
+  assert.equal(typeof paata.spots, 'number', 'counts arrive as numbers');
+  assert.equal(paata.own_brand_present, true, 'Sunsilk is already in this block');
+});
+
+test('aggregation declares an audience panel that does not match the brief', { skip }, async () => {
+  await loadMicos();
+  // A brief written in demographic terms will not match a named MICOS panel.
+  const data = await aggregate.buildAggregatedData(
+    await sampleBrief({ target_audience: 'Housewives 25-44' }),
   );
-  // Ranked by GRP.
-  const grps = data.programme_ratings.map((p) => Number(p.grp));
-  assert.deepEqual(grps, [...grps].sort((a, b) => b - a));
-});
-
-test('audience matching does not leak the opposite gender', { skip }, async () => {
-  // "Females 15-40" and "Males 15-40" share the age tokens, and "male" is a
-  // substring of "female" - both are ways a looser matcher hands a planner the
-  // wrong demographic without saying so.
-  const { channels } = await parseChannelWorkbook(await fixtures.channelWorkbook());
-  const { ratings } = await parseGrpWorkbook(await fixtures.grpWorkbookWide());
-  await tvRepo.persistTvUpload({ channels, ratings });
-
-  const males = await briefRepo.insertBrief({ brand: 'X', target_audience: 'Males 15-40' });
-  const data = await aggregate.buildAggregatedData(males);
-
-  assert.ok(data.programme_ratings.length > 0);
+  assert.equal(data.scope.audience_matched, false);
   assert.ok(
-    data.programme_ratings.every((p) => /^males/i.test(p.target_audience)),
-    `expected only male audiences, got: ${[...new Set(data.programme_ratings.map((p) => p.target_audience))].join(', ')}`,
+    data.data_notes.some((n) => /does not match the audience panel/.test(n)),
+    'the mismatch is stated rather than passed off as targeted',
   );
 });
 
-test('aggregation declares an audience fallback rather than passing it off as targeted', { skip }, async () => {
-  const { channels } = await parseChannelWorkbook(await fixtures.channelWorkbook());
-  const { ratings } = await parseGrpWorkbook(await fixtures.grpWorkbookLong());
-  await tvRepo.persistTvUpload({ channels, ratings });
-
-  const brief = await briefRepo.insertBrief({
-    brand: 'Alpha Cola', target_audience: 'Kids 4-9', language: 'Sinhala',
-  });
-  const data = await aggregate.buildAggregatedData(brief);
-
-  assert.ok(data.programme_ratings.length > 0, 'something is still returned to work with');
+test('aggregation says so when no cost data is loaded', { skip }, async () => {
+  await loadMicos();
+  const data = await aggregate.buildAggregatedData(await sampleBrief());
+  assert.deepEqual(data.programme_rates, []);
   assert.ok(
-    data.data_notes.some((n) => /did not match|No ratings matched/i.test(n)),
-    'the mismatch is stated in data_notes so the model can caveat it',
+    data.data_notes.some((n) => /cannot be costed/.test(n)),
+    'an uncostable plan is flagged before the model is asked for costs',
   );
 });
 
 test('aggregation reports empty data instead of failing', { skip }, async () => {
-  const brief = await briefRepo.insertBrief({ brand: 'Nonexistent Brand' });
-  const data = await aggregate.buildAggregatedData(brief);
-
+  const data = await aggregate.buildAggregatedData(await sampleBrief({ brand: 'Nonexistent' }));
   assert.deepEqual(data.competitor_spend_by_quarter, []);
   assert.deepEqual(data.programme_ratings, []);
   assert.ok(data.data_notes.length > 0, 'gaps are described, not silent');
 });
 
+test('adex competitor scoping excludes the brief brand', { skip }, async () => {
+  const { rows } = await parseAdexWorkbook(await fx.adexWorkbook());
+  await adexRepo.upsertAdexRows(rows);
+
+  const data = await aggregate.buildAggregatedData(await sampleBrief({ brand: 'Cavin Kare' }));
+  const brands = new Set(data.competitor_spend_by_quarter.map((r) => r.brand));
+  assert.ok(!brands.has('Cavin Kare'), 'the brief brand is excluded from its own competitor set');
+  assert.ok(data.own_brand_trend.length > 0, 'and reported separately as the own-brand trend');
+});
+
+// --- briefs ----------------------------------------------------------------
+
 test('briefs round-trip the campaign period', { skip }, async () => {
-  const brief = await briefRepo.insertBrief({
-    brand: 'Alpha Cola', period_start: '2024-04-01', period_end: '2024-06-30',
-    medium_split: { tv: 70, radio: 30 },
-  });
-  assert.equal(brief.period_start, '2024-04-01');
-  assert.equal(brief.period_end, '2024-06-30');
+  const brief = await sampleBrief();
+  assert.equal(brief.period_start, '2026-08-01');
+  assert.equal(brief.period_end, '2026-09-30');
 
   const fetched = await briefRepo.getBrief(brief.id);
-  assert.equal(fetched.period_start, '2024-04-01');
-  assert.equal(fetched.period_end, '2024-06-30');
-  assert.deepEqual(fetched.medium_split, { tv: 70, radio: 30 });
+  assert.equal(fetched.period_start, '2026-08-01');
+  assert.deepEqual(fetched.medium_split, { tv: 70, radio: 20, press: 10 });
 });
 
 test('a brief with no period is allowed', { skip }, async () => {

@@ -23,6 +23,8 @@ router.post('/generate/:briefId', asyncRoute(async (req, res) => {
     recommended_lineup: result.recommendation.recommended_lineup,
     overall_rationale: result.recommendation.overall_rationale,
     competitor_analysis: result.recommendation.competitor_analysis,
+    budget_fit: result.recommendation.budget_fit,
+    budget: result.recommendation.budget,
     confidence: result.recommendation.confidence,
     gaps_or_caveats: result.recommendation.gaps_or_caveats,
     grounding: result.recommendation.grounding,

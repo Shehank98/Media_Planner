@@ -1,6 +1,7 @@
+import path from 'node:path';
 import express from 'express';
 import multer from 'multer';
-import { config, assertConfigured } from './config.js';
+import { config, assertConfigured, ROOT } from './config.js';
 import { log } from './util/logger.js';
 import { migrate, pool, close } from './db.js';
 import { startScheduler, stopScheduler } from './sync/scheduler.js';
@@ -10,6 +11,7 @@ import { healthCheck as ollamaHealth } from './llm/ollama.js';
 import { reportWorkerHealth } from './services/reportService.js';
 import { adexFacets } from './services/adexRepo.js';
 import { tvFacets } from './services/tvRepo.js';
+import { micosFacets } from './services/micosRepo.js';
 
 import { router as syncRouter } from './routes/sync.js';
 import { router as uploadsRouter } from './routes/uploads.js';
@@ -19,6 +21,10 @@ import { router as plansRouter } from './routes/plans.js';
 const app = express();
 app.disable('x-powered-by');
 app.use(express.json({ limit: '2mb' }));
+
+// The browser UI. Served from the same origin as the API so there is no CORS
+// configuration to get wrong, and no build step to run before deploying.
+app.use(express.static(path.join(ROOT, 'public'), { extensions: ['html'] }));
 
 app.use((req, res, next) => {
   const started = Date.now();
@@ -67,8 +73,8 @@ app.get('/health', asyncRoute(async (_req, res) => {
 
 /** Everything the in-app filter controls need in one call. */
 app.get('/api/facets', asyncRoute(async (_req, res) => {
-  const [adex, tv] = await Promise.all([adexFacets(), tvFacets(pool)]);
-  res.json({ adex, tv });
+  const [adex, tv, micos] = await Promise.all([adexFacets(), tvFacets(pool), micosFacets(pool)]);
+  res.json({ adex, tv, ratings: micos });
 }));
 
 // --- api -------------------------------------------------------------------

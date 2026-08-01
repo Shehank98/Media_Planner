@@ -65,7 +65,10 @@ function labelMatches(label, synonym) {
   // Whole-word containment: "tv spend 000" contains "tv spend".
   const re = new RegExp(`(^| )${target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}( |$)`);
   if (re.test(label)) return 2;
-  if (label.includes(target)) return 1; // loose substring
+  // Loose substring, but only for targets long enough to be meaningful. A
+  // short one matches almost anything - "q" for quarter hits "tv frq", which
+  // silently files a frequency count as the quarter label.
+  if (target.length >= 4 && label.includes(target)) return 1;
   return 0;
 }
 

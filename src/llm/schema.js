@@ -15,6 +15,7 @@ export const EMPTY_RESULT = {
   recommended_lineup: [],
   overall_rationale: '',
   competitor_analysis: '',
+  budget_fit: '',
   confidence: 'low',
   gaps_or_caveats: '',
 };
@@ -92,13 +93,26 @@ export function normaliseResult(raw) {
 
   const recommended_lineup = lineupSource
     .filter((item) => item && typeof item === 'object')
-    .map((item) => ({
-      channel: text(item.channel ?? item.channel_name),
-      programme: text(item.programme ?? item.programme_name ?? item.program),
-      day_part: text(item.day_part ?? item.dayPart ?? item.daypart),
-      grp: numberOrNull(item.grp ?? item.GRP ?? item.trp) ?? 0,
-      rationale: text(item.rationale ?? item.why ?? item.reason),
-    }))
+    .map((item) => {
+      const spots = numberOrNull(item.spots ?? item.no_of_spots ?? item.spot_count);
+      const cost = numberOrNull(item.est_cost_lkr ?? item.est_cost ?? item.cost ?? item.estimated_cost);
+      return {
+        channel: text(item.channel ?? item.channel_name),
+        programme: text(item.programme ?? item.programme_name ?? item.program),
+        day: text(item.day ?? item.day_of_week ?? item.days),
+        day_part: text(item.day_part ?? item.dayPart ?? item.daypart ?? item.time_band),
+        spot_duration_secs: numberOrNull(
+          item.spot_duration_secs ?? item.duration_secs ?? item.duration ?? item.spot_duration,
+        ),
+        spots: spots === null ? null : Math.max(0, Math.round(spots)),
+        // MICOS reports "Avg. Ratings"; accept the older grp/trp keys too.
+        rating: numberOrNull(item.rating ?? item.avg_rating ?? item.trp ?? item.grp),
+        // null means "no observed cost for this slot", which is a real and
+        // reportable state - not the same as zero.
+        est_cost_lkr: cost,
+        rationale: text(item.rationale ?? item.why ?? item.reason),
+      };
+    })
     .filter((item) => item.channel || item.programme);
 
   const confidenceRaw = text(obj.confidence).toLowerCase();
@@ -108,8 +122,47 @@ export function normaliseResult(raw) {
     recommended_lineup,
     overall_rationale: text(obj.overall_rationale ?? obj.rationale ?? obj.summary),
     competitor_analysis: text(obj.competitor_analysis ?? obj.competitors),
+    budget_fit: text(obj.budget_fit ?? obj.budget ?? obj.budget_summary),
     confidence,
     gaps_or_caveats: text(obj.gaps_or_caveats ?? obj.caveats ?? obj.gaps),
+  };
+}
+
+/**
+ * Total the plan's cost and compare it against the brief's budget.
+ *
+ * Arithmetic the model should not be trusted with: a plan that quietly commits
+ * 140% of the budget looks exactly like one that fits, unless someone adds the
+ * numbers up. Budgets are held in LKR lakhs, spot costs in LKR.
+ */
+export function costPlan(lineup, budgetLakhs) {
+  let total = 0;
+  let costedLines = 0;
+  let uncostedLines = 0;
+
+  for (const item of lineup) {
+    if (item.est_cost_lkr === null || item.est_cost_lkr === undefined) {
+      uncostedLines += 1;
+      continue;
+    }
+    // est_cost_lkr is the cost for the line as a whole when spots is absent.
+    total += item.est_cost_lkr;
+    costedLines += 1;
+  }
+
+  const budgetLkr = budgetLakhs === null || budgetLakhs === undefined
+    ? null
+    : Number(budgetLakhs) * 100_000;
+
+  return {
+    total_cost_lkr: Math.round(total),
+    total_cost_lakhs: +(total / 100_000).toFixed(2),
+    budget_lkr: budgetLkr,
+    budget_lakhs: budgetLakhs ?? null,
+    utilisation_pct: budgetLkr ? +((total / budgetLkr) * 100).toFixed(1) : null,
+    over_budget: budgetLkr ? total > budgetLkr : null,
+    costed_lines: costedLines,
+    uncosted_lines: uncostedLines,
   };
 }
 
@@ -128,18 +181,28 @@ export function normaliseResult(raw) {
  * what the model proposed and why it was doubted.
  */
 export function groundLineup(result, aggregatedData) {
-  const programmes = aggregatedData?.programme_ratings || [];
   const knownProgrammes = new Set();
   const knownChannels = new Set();
-  for (const p of programmes) {
-    if (p.programme_name) knownProgrammes.add(comparisonKey(p.programme_name));
-    if (p.channel_name) knownChannels.add(comparisonKey(p.channel_name));
-  }
-  // Channels can legitimately come from the channel master list even when no
-  // programme for them cleared the audience filter.
-  for (const c of aggregatedData?.channels || []) {
-    if (c.channel_name) knownChannels.add(comparisonKey(c.channel_name));
-  }
+
+  const learn = (rows) => {
+    for (const row of rows || []) {
+      if (row.programme_name) knownProgrammes.add(comparisonKey(row.programme_name));
+      if (row.channel_name) knownChannels.add(comparisonKey(row.channel_name));
+    }
+  };
+
+  // TV ratings are the main source, but not the only legitimate one:
+  //  - programme_rates covers radio, which never appears in the TV ratings
+  //    panel at all. Without it, every radio line would be reported as
+  //    invented, which is both wrong and corrosive to trust in the flag.
+  //  - competitor_spot_pressure names programmes the plan can legitimately
+  //    target even when they fall outside the ratings shortlist.
+  //  - channel_performance covers channels with no shortlisted programme.
+  learn(aggregatedData?.programme_ratings);
+  learn(aggregatedData?.programme_rates);
+  learn(aggregatedData?.competitor_spot_pressure);
+  learn(aggregatedData?.channel_performance);
+  learn(aggregatedData?.channels);
 
   // With no rating data at all there's nothing to check against; the model
   // should already be saying so in gaps_or_caveats.
@@ -147,30 +210,63 @@ export function groundLineup(result, aggregatedData) {
     return { ...result, grounding: { checked: false, reason: 'no rating data supplied' } };
   }
 
+  // Observed spot rates, keyed by channel|programme, for checking quoted costs.
+  const rateIndex = new Map();
+  for (const rate of aggregatedData?.programme_rates || []) {
+    const key = `${comparisonKey(rate.channel_name)}|${comparisonKey(rate.programme_name)}`;
+    if (!rateIndex.has(key)) rateIndex.set(key, []);
+    rateIndex.get(key).push(rate);
+  }
+
   const unmatched = [];
+  const unsupportedCosts = [];
+
   const lineup = result.recommended_lineup.map((item) => {
     const channelOk = !item.channel || knownChannels.has(comparisonKey(item.channel));
     const programmeOk = !item.programme || knownProgrammes.has(comparisonKey(item.programme));
-    if (channelOk && programmeOk) return { ...item, in_source_data: true };
+    const label = [item.channel, item.programme].filter(Boolean).join(' - ') || '(unnamed entry)';
 
-    unmatched.push(
-      [item.channel, item.programme].filter(Boolean).join(' - ') || '(unnamed entry)',
-    );
-    return { ...item, in_source_data: false };
+    if (!channelOk || !programmeOk) {
+      unmatched.push(label);
+      return { ...item, in_source_data: false, cost_supported: null };
+    }
+
+    // A cost is only defensible if media watch actually observed a rate for
+    // that channel and programme. An invented price is the most damaging thing
+    // in the whole plan - it goes straight into a client's budget.
+    let costSupported = null;
+    if (item.est_cost_lkr !== null && item.est_cost_lkr !== undefined) {
+      const rates = rateIndex.get(`${comparisonKey(item.channel)}|${comparisonKey(item.programme)}`);
+      costSupported = Boolean(rates && rates.length);
+      if (!costSupported) unsupportedCosts.push(label);
+    }
+    return { ...item, in_source_data: true, cost_supported: costSupported };
   });
 
-  if (!unmatched.length) {
+  const problems = [];
+  if (unmatched.length) {
+    problems.push(
+      `${unmatched.length} recommended entry/entries could not be matched to the supplied ` +
+      `rating data (${unmatched.join('; ')})`,
+    );
+  }
+  if (unsupportedCosts.length) {
+    problems.push(
+      `${unsupportedCosts.length} entry/entries quote a cost with no observed spot rate in the ` +
+      `media watch data (${unsupportedCosts.join('; ')})`,
+    );
+  }
+
+  if (!problems.length) {
     return {
       ...result,
       recommended_lineup: lineup,
-      grounding: { checked: true, unmatched: [] },
+      grounding: { checked: true, unmatched: [], unsupported_costs: [] },
     };
   }
 
   const note =
-    `Automated check: ${unmatched.length} recommended entry/entries could not be matched ` +
-    `to the supplied rating data (${unmatched.join('; ')}). Verify these against the source ` +
-    'before issuing the plan.';
+    `Automated check: ${problems.join('. ')}. Verify against the source before issuing the plan.`;
 
   return {
     ...result,
@@ -178,6 +274,6 @@ export function groundLineup(result, aggregatedData) {
     // Never let an ungrounded plan claim high confidence.
     confidence: result.confidence === 'high' ? 'medium' : result.confidence,
     gaps_or_caveats: [result.gaps_or_caveats, note].filter(Boolean).join('\n\n'),
-    grounding: { checked: true, unmatched },
+    grounding: { checked: true, unmatched, unsupported_costs: unsupportedCosts },
   };
 }

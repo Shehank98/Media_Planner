@@ -40,6 +40,7 @@ export async function generateReport(planId) {
       competitor_analysis: plan.competitor_analysis,
       confidence: plan.confidence,
       gaps_or_caveats: plan.gaps_or_caveats,
+      budget_fit: stored.budget_fit || '',
       model_used: plan.model_used,
       created_at: plan.created_at,
     },
@@ -47,9 +48,11 @@ export async function generateReport(planId) {
     chart_data: {
       competitor_spend: stored.competitor_spend,
       programme_ratings: stored.programme_ratings,
+      day_of_week: stored.day_of_week,
       medium_split: stored.medium_split,
     },
     aggregated: stored.aggregated || {},
+    budget: stored.budget || {},
     meta: stored.meta || { model_used: plan.model_used },
   };
 

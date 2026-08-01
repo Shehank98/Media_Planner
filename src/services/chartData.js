@@ -14,8 +14,75 @@ export function buildChartData(aggregated, recommendation, brief) {
     competitor_spend: competitorSpendSeries(aggregated),
     programme_ratings: programmeRatingSeries(aggregated, recommendation),
     medium_split: mediumSplitSeries(aggregated, brief),
+    // Which days the audience is actually available - the evidence behind the
+    // "day" column in the lineup.
+    day_of_week: dayOfWeekSeries(aggregated, recommendation),
     generated_at: new Date().toISOString(),
   };
+}
+
+/**
+ * Ratings by day of week, for the channels the plan actually uses.
+ *
+ * Charting every loaded channel would be unreadable; the ones in the lineup are
+ * the ones a reader needs to sanity-check the day choice against.
+ */
+function dayOfWeekSeries(aggregated, recommendation) {
+  const rows = aggregated.best_days || [];
+  const ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+  const planned = new Set(
+    (recommendation?.recommended_lineup || [])
+      .map((i) => (i.channel || '').toLowerCase())
+      .filter(Boolean),
+  );
+  const plannedDays = new Set(
+    (recommendation?.recommended_lineup || [])
+      .map((i) => (i.day || '').toLowerCase())
+      .filter(Boolean),
+  );
+
+  const byChannel = new Map();
+  for (const row of rows) {
+    const key = row.channel_name;
+    if (planned.size && !planned.has(key.toLowerCase())) continue;
+    if (!byChannel.has(key)) byChannel.set(key, new Map());
+    byChannel.get(key).set(row.day_of_week, Number(row.ratings) || 0);
+  }
+
+  // No lineup yet (or no overlap): fall back to the strongest channels.
+  const source = byChannel.size ? byChannel : fallbackChannels(rows);
+
+  const series = [...source.entries()]
+    .map(([label, values]) => ({
+      label,
+      values: ORDER.map((d) => values.get(d) ?? 0),
+      total: [...values.values()].reduce((a, b) => a + b, 0),
+    }))
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 6)
+    .map(({ label, values }) => ({ label, values }));
+
+  return {
+    title: 'Audience by day of week',
+    subtitle: aggregated.scope?.audience_panel
+      ? `Panel: ${aggregated.scope.audience_panel}`
+      : 'All loaded audiences',
+    y_label: 'Ratings',
+    categories: ORDER,
+    // Days the plan actually buys, so the chart can mark them.
+    highlighted: ORDER.filter((d) => plannedDays.has(d.toLowerCase())),
+    series,
+  };
+}
+
+function fallbackChannels(rows) {
+  const byChannel = new Map();
+  for (const row of rows) {
+    if (!byChannel.has(row.channel_name)) byChannel.set(row.channel_name, new Map());
+    byChannel.get(row.channel_name).set(row.day_of_week, Number(row.ratings) || 0);
+  }
+  return byChannel;
 }
 
 /** Grouped bars: one series per brand, one bar per quarter. */
@@ -75,13 +142,16 @@ function programmeRatingSeries(aggregated, recommendation) {
   );
 
   const items = rows.map((r) => {
-    const value = r.grp ?? r.trp ?? 0;
+    // MICOS reports "Avg. Ratings", surfaced as avg_rating by the aggregation.
+    const value = r.avg_rating ?? r.trp ?? r.grp ?? 0;
     return {
       label: `${r.programme_name} (${r.channel_name})`,
       value: Number(value) || 0,
-      metric: r.grp != null ? 'GRP' : 'TRP',
-      day_part: r.day_part || null,
+      metric: 'Avg. rating',
+      programme_category: r.programme_category || null,
       target_audience: r.target_audience || null,
+      observed_avg_cost: r.observed_avg_cost ?? null,
+      cost_per_rating_point: r.cost_per_rating_point ?? null,
       recommended: recommended.has(
         `${(r.channel_name || '').toLowerCase()}|${(r.programme_name || '').toLowerCase()}`,
       ),
@@ -91,10 +161,10 @@ function programmeRatingSeries(aggregated, recommendation) {
 
   return {
     title: 'Programme ratings for the target audience',
-    subtitle: aggregated.scope?.target_audience
-      ? `Target audience: ${aggregated.scope.target_audience}`
+    subtitle: aggregated.scope?.audience_panel
+      ? `Panel: ${aggregated.scope.audience_panel}`
       : 'All available audiences',
-    x_label: 'GRP / TRP',
+    x_label: 'Average rating',
     items,
   };
 }

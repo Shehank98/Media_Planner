@@ -70,12 +70,19 @@ export function int(raw) {
   return n === null ? null : Math.round(n);
 }
 
-const MONTHS = {
+export const MONTHS = {
   jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4,
   may: 5, jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8,
   sep: 9, sept: 9, september: 9, oct: 10, october: 10, nov: 11, november: 11,
   dec: 12, december: 12,
 };
+
+/** Month number from a month name, or null. */
+export function monthNumber(name) {
+  if (!name) return null;
+  const key = String(name).trim().toLowerCase();
+  return MONTHS[key] ?? MONTHS[key.slice(0, 3)] ?? null;
+}
 
 /**
  * Parse a date cell into a YYYY-MM-DD string.
@@ -86,7 +93,7 @@ const MONTHS = {
  * product2) key assumes - otherwise the same month written two ways would
  * produce two rows.
  */
-export function toDate(raw, { snapToMonthStart = false } = {}) {
+export function toDate(raw, { snapToMonthStart = false, monthFirst = false } = {}) {
   const v = cellValue(raw);
   if (v === null || v === undefined) return null;
 
@@ -119,9 +126,22 @@ export function toDate(raw, { snapToMonthStart = false } = {}) {
   let m = s.match(/^(\d{4})[-/.](\d{1,2})(?:[-/.](\d{1,2}))?$/);
   if (m) return fmt(+m[1], +m[2], snapToMonthStart ? 1 : (m[3] ? +m[3] : 1));
 
-  // 15-01-2024 / 15/01/2024 - day-first, the Sri Lankan convention.
+  // 15-01-2024 / 15/01/2024.
+  //
+  // Genuinely ambiguous: day-first is the Sri Lankan convention, but the adex
+  // exports are month-first ("2/1/2021" is February). Callers that can prove
+  // which it is - the adex parser cross-checks against the Month2 name column -
+  // pass monthFirst; otherwise day-first stands as the local default.
   m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
-  if (m) return fmt(+m[3], +m[2], snapToMonthStart ? 1 : +m[1]);
+  if (m) {
+    const first = +m[1];
+    const second = +m[2];
+    // A value over 12 can only be the day, whatever the convention.
+    const useMonthFirst = second > 12 ? true : first > 12 ? false : monthFirst;
+    const month = useMonthFirst ? first : second;
+    const day = useMonthFirst ? second : first;
+    return fmt(+m[3], month, snapToMonthStart ? 1 : day);
+  }
 
   // Jan-24 / Jan 2024 / January-2024
   m = s.match(/^([A-Za-z]{3,9})[-\s/]*(\d{2,4})$/);

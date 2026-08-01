@@ -10,15 +10,31 @@ import { SAMPLE_AGGREGATED, SAMPLE_BRIEF } from './fixtures.js';
 const PLAN = {
   id: 1,
   recommended_lineup: [
-    { channel: 'TV Derana', programme: 'Teledrama Hour', day_part: 'Prime Time', grp: 18.2, rationale: 'Highest GRP against the target audience, and Beta Fizz is not buying it.', in_source_data: true },
-    { channel: 'TV Derana', programme: 'Derana News', day_part: 'Prime Time', grp: 12.5, rationale: 'Consistent delivery at a lower rate than the teledrama block.', in_source_data: true },
-    { channel: 'Sirasa TV', programme: 'Sunday Blockbuster', day_part: 'Weekend', grp: 9.0, rationale: 'Weekend reach extension.', in_source_data: false },
+    { channel: 'HIRU TV', programme: 'PAATA KURULLO', day: 'Tuesday', day_part: 'Evening Peak (1900 - 2059)',
+      spot_duration_secs: 15, spots: 8, rating: 21.33, est_cost_lkr: 1160000,
+      rationale: 'Highest rated programme on the panel, and Hiru carries 28% share of audience.',
+      in_source_data: true, cost_supported: true },
+    { channel: 'DERANA TV', programme: 'SANGEETHE - SEASON 2', day: 'Tuesday', day_part: 'Evening Peak (1900 - 2059)',
+      spot_duration_secs: 15, spots: 6, rating: 10.54, est_cost_lkr: null,
+      rationale: 'Derana peaks Tuesday in evening peak; heaviest competitor block at 554 GRP.',
+      in_source_data: true, cost_supported: null },
+    { channel: 'SIRASA TV', programme: 'Invented Mega Show', day: 'Monday', day_part: 'Evening Peak (1900 - 2059)',
+      spot_duration_secs: 30, spots: 5, rating: 18.0, est_cost_lkr: 900000,
+      rationale: 'Not present in the supplied data.',
+      in_source_data: false, cost_supported: null },
   ],
-  overall_rationale: 'Alpha Cola has been outspent roughly four to one by Beta Fizz over the last two quarters. The plan concentrates the TV budget on prime-time Sinhala programming where the target audience is strongest.',
-  competitor_analysis: 'Beta Fizz spent LKR 5.2m in Q1 against Alpha Cola\'s 1.15m, with 81% of that on TV. Gamma Drink is the only brand meaningfully present in radio.',
+  overall_rationale: 'Hiru and Derana together carry 48% of panel share for Meera 16-45, and both peak in Tuesday evening peak. The plan concentrates TV weight there rather than spreading across the week.',
+  competitor_analysis: 'Dove and Lifebuoy dominate the top teledrama blocks - 554 GRP in Sangeethe and 453 in Paata Kurullo. Sunsilk is already present but at lower weight.',
+  budget_fit: 'The costed lines total LKR 20.6 lakhs against a 250 lakh budget; the Derana line has no observed rate.',
   confidence: 'medium',
-  gaps_or_caveats: 'Rating data covers Jan-Mar 2024 only.\n\nAutomated check: 1 recommended entry could not be matched to the supplied rating data (Sirasa TV - Sunday Blockbuster).',
+  gaps_or_caveats: 'Rating data covers June 2026 only.\n\nAutomated check: 1 recommended entry could not be matched to the supplied rating data (SIRASA TV - Invented Mega Show).',
   model_used: 'gemini:gemini-2.5-flash',
+};
+
+const BUDGET = {
+  total_cost_lkr: 2060000, total_cost_lakhs: 20.6, budget_lkr: 25000000,
+  budget_lakhs: 250, utilisation_pct: 8.2, over_budget: false,
+  costed_lines: 2, uncosted_lines: 1,
 };
 
 function runPython(args) {
@@ -39,9 +55,9 @@ function runPython(args) {
 test('chart data is derived from the aggregates', () => {
   const charts = buildChartData(SAMPLE_AGGREGATED, PLAN, SAMPLE_BRIEF);
 
-  assert.deepEqual(charts.competitor_spend.categories, ['2023-Q4', '2024-Q1']);
-  const beta = charts.competitor_spend.series.find((s) => s.label === 'Beta Fizz');
-  assert.deepEqual(beta.values, [4550, 5200], 'quarters align across series');
+  assert.deepEqual(charts.competitor_spend.categories, ['2026-Q1', '2026-Q2']);
+  const dove = charts.competitor_spend.series.find((s) => s.label === 'Dove');
+  assert.deepEqual(dove.values, [4550, 5200], 'quarters align across series');
 
   const own = charts.competitor_spend.series.find((s) => s.is_own_brand);
   assert.ok(own, 'the own brand is always charted, even when not a top spender');
@@ -51,9 +67,9 @@ test('chart data is derived from the aggregates', () => {
 test('chart data marks which programmes made the lineup', () => {
   const charts = buildChartData(SAMPLE_AGGREGATED, PLAN, SAMPLE_BRIEF);
   const items = charts.programme_ratings.items;
-  assert.equal(items[0].label, 'Teledrama Hour (TV Derana)', 'ranked by rating');
+  assert.equal(items[0].label, 'PAATA KURULLO (HIRU TV)', 'ranked by rating');
   assert.equal(items[0].recommended, true);
-  assert.equal(items.find((i) => i.label.startsWith('Sirasa News')).recommended, false);
+  assert.equal(items.find((i) => i.label.startsWith('AKURATA')).recommended, false);
 });
 
 test('medium split charts the brief against the category benchmark', () => {
@@ -84,6 +100,7 @@ test('the python worker renders a complete PDF', async () => {
       plan: PLAN,
       chart_data: buildChartData(SAMPLE_AGGREGATED, PLAN, SAMPLE_BRIEF),
       aggregated: SAMPLE_AGGREGATED,
+      budget: BUDGET,
       meta: { model_used: 'gemini:gemini-2.5-flash' },
     };
     const payloadPath = path.join(dir, 'payload.json');
@@ -98,7 +115,8 @@ test('the python worker renders a complete PDF', async () => {
     const head = (await fs.readFile(outPath)).subarray(0, 5).toString();
     assert.equal(head, '%PDF-', 'output is a real PDF');
 
-    for (const chart of ['competitor_spend.png', 'programme_ratings.png', 'medium_split.png']) {
+    for (const chart of ['competitor_spend.png', 'programme_ratings.png',
+      'day_of_week.png', 'medium_split.png']) {
       const s = await fs.stat(path.join(dir, chart));
       assert.ok(s.size > 5_000, `${chart} did not render`);
     }
@@ -114,7 +132,8 @@ test('the report renders even with no data at all', async () => {
   try {
     const empty = {
       scope: {}, competitor_spend_by_quarter: [], own_brand_trend: [],
-      category_totals_by_quarter: [], programme_ratings: [], channels: [],
+      category_totals_by_quarter: [], programme_ratings: [], channel_performance: [],
+      best_days: [], best_dayparts: [], programme_rates: [], competitor_spot_pressure: [],
       data_notes: ['No programme rating data is available for this brief.'],
     };
     const emptyPlan = {

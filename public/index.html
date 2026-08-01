@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Media Planning &amp; Analysis Assistant</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap">
+    <h1>Media Planning &amp; Analysis Assistant</h1>
+    <div id="status" class="status" aria-live="polite">checking…</div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- 1 ------------------------------------------------------------------ -->
+  <section class="card">
+    <div class="card-head">
+      <h2><span class="step">1</span> Ratings &amp; cost data</h2>
+      <button id="refresh-facets" class="ghost" type="button">Refresh</button>
+    </div>
+    <p class="hint">
+      MICOS dashboard exports (TV_ChannelDetails / TV_GrpDetails) and media watch spot logs.
+      Files are parsed in memory and never written to disk — only the extracted numbers are kept.
+    </p>
+    <form id="upload-form">
+      <label class="drop" for="tv-files">
+        <input type="file" id="tv-files" name="files" multiple
+               accept=".xlsx,.xlsm,.xls,.csv,.tsv,.txt">
+        <span>Choose files or drop them here</span>
+        <small id="tv-files-label">.xlsx exports and .csv/.tsv media watch logs</small>
+      </label>
+      <button type="submit" class="primary">Upload &amp; parse</button>
+    </form>
+    <div id="upload-result" class="result"></div>
+    <div id="facets" class="facets"></div>
+  </section>
+
+  <!-- 2 ------------------------------------------------------------------ -->
+  <section class="card">
+    <div class="card-head"><h2><span class="step">2</span> Campaign brief</h2></div>
+    <p class="hint">
+      Upload the brief PDF to pre-fill the form, then <strong>check every field before
+      saving</strong> — brief layouts are messy and the parse is a proposal, not a fact.
+    </p>
+    <form id="brief-upload-form">
+      <label class="drop small" for="brief-file">
+        <input type="file" id="brief-file" accept=".pdf">
+        <span>Choose a brief PDF</span>
+        <small id="brief-file-label">optional — you can fill the form in by hand</small>
+      </label>
+      <button type="submit" class="ghost">Parse PDF</button>
+    </form>
+    <div id="brief-warnings" class="result"></div>
+
+    <form id="brief-form" class="grid">
+      <label>Brand <span class="req">*</span><input name="brand" required></label>
+      <label>Advertiser<input name="advertiser"></label>
+      <label class="span2">Objective<input name="objective"></label>
+      <label>Target audience<input name="target_audience" list="audience-list">
+        <datalist id="audience-list"></datalist></label>
+      <label>Language<input name="language"></label>
+      <label>Territory<input name="territory"></label>
+      <label>Budget (LKR lakhs)<input name="budget_lkr_lakhs" type="number" step="0.01"></label>
+      <label>Period start<input name="period_start" type="date"></label>
+      <label>Period end<input name="period_end" type="date"></label>
+      <label>TV %<input name="tv" type="number" step="1"></label>
+      <label>Radio %<input name="radio" type="number" step="1"></label>
+      <label>Press %<input name="press" type="number" step="1"></label>
+      <div class="span2 actions">
+        <button type="submit" class="primary">Save brief</button>
+        <span id="brief-saved" class="saved"></span>
+      </div>
+    </form>
+  </section>
+
+  <!-- 3 ------------------------------------------------------------------ -->
+  <section class="card" id="plan-card" hidden>
+    <div class="card-head"><h2><span class="step">3</span> Generate the plan</h2></div>
+    <p class="hint">
+      Preview shows exactly what the model will be sent, and costs nothing.
+      Generating calls the model once — filtering afterwards re-runs the SQL only.
+    </p>
+    <div class="actions">
+      <button id="preview-btn" class="ghost" type="button">Preview data</button>
+      <button id="generate-btn" class="primary" type="button">Generate plan</button>
+      <span id="plan-status" class="saved"></span>
+    </div>
+    <div id="preview-out" class="result"></div>
+  </section>
+
+  <!-- 4 ------------------------------------------------------------------ -->
+  <section class="card" id="result-card" hidden>
+    <div class="card-head">
+      <h2><span class="step">4</span> Recommended plan</h2>
+      <a id="pdf-link" class="primary button" href="#" download>Download PDF</a>
+    </div>
+    <div id="plan-out"></div>
+  </section>
+
+</main>
+
+<footer class="wrap foot">
+  <span>Uploaded files are parsed in memory and discarded. Only extracted rows are stored.</span>
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>

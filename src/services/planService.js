@@ -38,7 +38,14 @@ export async function generatePlan(briefId, opts = {}) {
       recommendation.competitor_analysis,
       // The aggregates travel with the charts so the PDF appendix and any later
       // re-render work from exactly the numbers the model saw.
-      JSON.stringify({ ...chartData, aggregated, meta: recommendation.meta }),
+      JSON.stringify({
+        ...chartData,
+        aggregated,
+        meta: recommendation.meta,
+        budget: recommendation.budget,
+        budget_fit: recommendation.budget_fit,
+        grounding: recommendation.grounding,
+      }),
       recommendation.confidence,
       recommendation.gaps_or_caveats,
       recommendation.meta.model_used,

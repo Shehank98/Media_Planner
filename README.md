@@ -21,13 +21,34 @@ Gemini today, local Ollama later, one env var apart.
 [Python worker: matplotlib + reportlab] --> PDF report
 ```
 
+## The data
+
+Five sources, each answering a different planning question.
+
+| Source | Sheet / feed | Answers |
+|---|---|---|
+| MICOS dashboard | `C1` top programmes | which **programmes** |
+| MICOS dashboard | `A1` channel summary | which **channels** |
+| MICOS dashboard | `A2` day of week | which **days** |
+| MICOS dashboard | `A3` day-part bands | which **day-parts** |
+| MICOS dashboard | `TV GRP` spot log | who is **already buying** the slot |
+| Media watch | spot log with cost | what a spot **costs** |
+| Adex | monthly spend by brand | category **spend context** |
+
+A MICOS export is not one table. Sheets are named by code (`A1`, `C1`,
+`TV GRP`), a `Target` sheet above them carries the survey window and the custom
+target group (`Custom TG: Meera 16-45`), and a `Sheet1` PivotTable scratch
+sheet must be *ignored* or it double-counts. Sheets are therefore identified by
+their header signature, not by name — the two `TV_GrpDetails` exports have
+entirely different contents from each other despite the shared naming.
+
 ## Two rules that shape the design
 
 **Adex is synced, not uploaded.** `adex_data` is a live table pulled from a
 Google Drive folder on a schedule. Re-syncing a corrected file updates the rows
 it covers instead of duplicating them.
 
-**TVR/channel uploads are session-only.** The workbook is parsed in memory,
+**Ratings and cost uploads are session-only.** The workbook is parsed in memory,
 the numbers go to Postgres, and the buffer is dropped. Nothing is written to
 disk, so there is no file to forget to delete. Only the extracted rows live on.
 
@@ -63,13 +84,16 @@ worker and the sync scheduler — check it first when something looks wrong.
 
 ## The flow
 
+Open the app at `/` and work down the page, or drive the same JSON API directly.
+
 1. **Upload the brief** — `POST /api/briefs/parse` returns the fields it found,
    which label each one matched, and warnings. **It saves nothing.** Brief PDFs
    are messy multi-table layouts and the parse is a proposal, not a fact.
 2. **Confirm** — the corrected fields go to `POST /api/briefs`.
-3. **Aggregate** — targeted SQL, not row dumps: competitor spend by brand and
-   quarter in the same category, the own-brand trend, and the top ~20 programmes
-   by GRP for the brief's audience and language.
+3. **Aggregate** — targeted SQL, not row dumps: competitor spend by quarter, the
+   own-brand trend, the top ~20 programmes by rating, each channel's strongest
+   day and day-part (already ranked), observed spot rates joined on by channel
+   and programme, and who else is buying those programmes.
 4. **Model** — the aggregate plus the brief go to `analyzeAndRecommend()`, which
    returns the fixed JSON shape.
 5. **Store and chart** — the recommendation, the chart series and the aggregates
@@ -84,11 +108,12 @@ client has already seen doesn't shift under them.
 
 | Method | Path | Notes |
 |---|---|---|
+| `GET` | `/` | The browser UI. |
 | `GET` | `/health` | Dependency status. |
 | `GET` | `/api/facets` | Filter values (sectors, categories, languages, audiences). |
 | `POST` | `/api/sync/now` | "Sync now". `?force=true` re-ingests unchanged files. |
 | `GET` | `/api/sync/status` | Running state, adex coverage, recent runs. |
-| `POST` | `/api/uploads/tv` | Channel/TVR workbooks. Session-only. |
+| `POST` | `/api/uploads/tv` | MICOS exports and media watch logs. Session-only. |
 | `DELETE` | `/api/uploads/tv?confirm=true` | Clear ratings before a new survey. |
 | `POST` | `/api/briefs/parse` | Parse a brief PDF. Saves nothing. |
 | `POST` | `/api/briefs` | Save the confirmed brief. |
@@ -111,21 +136,19 @@ the synonym list**, not changing logic. `POST /api/uploads/tv` reports
 `mappedColumns` per sheet, and the adex parser reports `unmappedFields`, so the
 missing label is visible rather than guessed at.
 
-The TVR parser handles both layouts it has seen:
+MICOS sheets are matched the same way, by header signature rather than sheet
+name, and every spec is scored so near-identical layouts (`A2` and `A3` differ
+by one column) resolve to the right one.
 
-- **long** — one row per programme × audience, with a Target Audience column
-- **wide** — an audience banner merged across GRP/TVR column pairs, unpivoted
-  into one row per audience
+The parsers have been run against the real `TV_ChannelDetails_*`,
+`TV_GrpDetails_*` and adex files: 586 programmes, 336 day/day-part rows and
+2,992 competitor spots load cleanly, keyed to the `Meera 16-45` panel over the
+June 2026 survey window.
 
-> **These parsers have not yet been run against the real
-> `TV_ChannelDetails_*` / `TV_GrpDetails_*` files** — those weren't available
-> when this was built, so they're calibrated against fixtures reproducing the
-> layout problems described above. Drop the real files in `samples/` and check
-> them (see `samples/README.md`); expect to add header wordings.
+## Three places the numbers could go quietly wrong
 
-## Two places the numbers could go quietly wrong
-
-Both are handled, and both are worth knowing about.
+All three are handled, and all three are worth knowing about — each one is a
+silent wrong answer rather than an error.
 
 **Natural keys and NULL.** The upsert key is
 `(month, advertiser, brand, product2)`, but in Postgres `NULL != NULL`, so a
@@ -139,25 +162,43 @@ values to `''`.
 budget-fit judgement the model makes. Unit words are converted; a bare number
 is converted *and flagged in the warnings* for the planner to confirm.
 
-## Grounding check
+**Month order in adex.** The adex exports write the month as `1/1/2021`,
+`2/1/2021`, `3/1/2021` — month-first. Read day-first (the Sri Lankan
+convention), every one of those collapses onto January, so a year of data
+silently becomes one month and the natural key merges rows that should be
+distinct. The parser cross-checks against the `Month2` name column and lets the
+named month win.
 
-The load-bearing rule in the system prompt is "never invent channel names or
-programmes not present in the supplied data" — and it's the one a model breaks
-most quietly. A plausible-sounding programme name in a client-facing report is
-worse than a gap.
+## Grounding and costing checks
 
-So it's verified in code rather than trusted: every recommended channel and
-programme is matched against the data the model was actually given. Unmatched
-entries are flagged on the row, described in `gaps_or_caveats`, marked with a
-dagger in the PDF lineup table, and the plan's confidence is capped at
+The load-bearing rule in the system prompt is "never invent channel names,
+programmes or costs not present in the supplied data" — and it's the one a
+model breaks most quietly. A plausible-sounding programme name in a
+client-facing report is worse than a gap; an invented price is worse still,
+because it goes straight into a client's budget.
+
+So three things are verified in code rather than trusted:
+
+- **Every channel and programme** is matched against the data the model was
+  given — TV ratings, media watch rates (which is where radio lives), spot-level
+  competitor activity and the channel summary. Unmatched entries are flagged.
+- **Every quoted cost** must have an observed spot rate behind it for that
+  channel and programme. A cost with no rate observation is flagged separately.
+- **The plan is totalled** and compared against the brief's budget. A plan that
+  quietly commits 140% of budget looks exactly like one that fits until someone
+  adds it up.
+
+Anything that fails is described in `gaps_or_caveats`, marked in the PDF lineup
+table (`†` ungrounded, `‡` unsupported cost), and caps the plan's confidence at
 `medium`. Flagged entries are **kept, not deleted** — a planner reviewing the
 plan should see what was proposed and why it was doubted.
 
 ## PDF report
 
-Seven sections: cover, executive summary, lineup table, three charts, competitor
-analysis, confidence and caveats, and an appendix with the raw aggregates for
-audit.
+Seven sections: cover, executive summary, costed lineup table, four charts,
+competitor analysis, confidence and caveats, and an appendix carrying the raw
+aggregates — programme ratings, day and day-part tables, observed spot rates and
+competitor activity — for audit.
 
 Node spawns `report/build_report.py` with a JSON payload. **The worker has no
 database access** — it can only draw what was already stored on the plan, which
@@ -191,25 +232,29 @@ tolerable; read the actual rationale before choosing.
 npm test
 ```
 
-68 tests. The database ones skip unless `TEST_DATABASE_URL` is set:
+85 tests. The database ones skip unless `TEST_DATABASE_URL` is set:
 
 ```bash
 TEST_DATABASE_URL=postgres://... npm test
 ```
 
-Those are worth running — upsert idempotency and the audience-matching rules
-are only meaningfully testable against real Postgres. `test/fixtures.js`
-generates workbooks with the same layout problems as the real files, and
+Those are worth running — upsert idempotency and the aggregation SQL are only
+meaningfully testable against real Postgres. `test/fixtures.js` generates
+workbooks matching the real MICOS and adex layouts (including the `Target`
+sheet, the PivotTable scratch sheet and the real column wording), and
 `test/make_brief_pdf.py` generates a deliberately awkward brief PDF.
 
 ## Layout
 
 ```
+public/                The browser UI (no build step)
 db/schema.sql          Schema, idempotent, applied on boot
 src/llm/               Adapter seam: index.js, gemini.js, ollama.js, systemPrompt.js
 src/parsers/           sheet.js (header detection) + one parser per file type
+                       adexParser, micosParser, mediaWatchParser, briefParser
 src/sync/              Drive client, adex sync, cron scheduler
-src/services/          Aggregation, repositories, plan pipeline, chart data
+src/services/          aggregate.js (adex) + tvAggregate.js (ratings, days, cost),
+                       repositories, plan pipeline, chart data
 src/routes/            HTTP layer
 report/                build_report.py, charts.py — the PDF worker
 ```

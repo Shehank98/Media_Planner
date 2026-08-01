@@ -11,6 +11,16 @@ import { log } from './util/logger.js';
 pg.types.setTypeParser(pg.types.builtins.NUMERIC, (v) => (v === null ? null : Number.parseFloat(v)));
 // DATE as a plain YYYY-MM-DD string, not a timezone-shifted Date object.
 pg.types.setTypeParser(pg.types.builtins.DATE, (v) => v);
+// int8 is also a string by default, which is how count(*), rank() and every
+// window function come back. Left alone, the model payload and the charts fill
+// up with "44" where they expect 44, and comparisons silently stop working.
+// Values beyond Number's safe range keep the string, since that is the reason
+// the driver is cautious here in the first place.
+pg.types.setTypeParser(pg.types.builtins.INT8, (v) => {
+  if (v === null) return null;
+  const n = Number(v);
+  return Number.isSafeInteger(n) ? n : v;
+});
 
 export const pool = new pg.Pool({
   connectionString: config.db.url,

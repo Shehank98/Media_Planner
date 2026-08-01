@@ -79,7 +79,9 @@ def _thousands(value, _pos):
 
 
 def _save(fig, path):
-    fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white")
+    # pad_inches keeps legends placed below the axes from being shaved off at
+    # the crop boundary.
+    fig.savefig(path, dpi=DPI, bbox_inches="tight", pad_inches=0.2, facecolor="white")
     plt.close(fig)
     return path
 
@@ -232,11 +234,68 @@ def medium_split_chart(data, out_dir):
     return _save(fig, path)
 
 
+def day_of_week_chart(data, out_dir):
+    """Grouped bars per channel across the week; bought days are accented."""
+    path = os.path.join(out_dir, "day_of_week.png")
+    categories = data.get("categories") or []
+    series = data.get("series") or []
+    if not categories or not series:
+        return _placeholder(path, "No day-of-week rating data available.")
+
+    highlighted = {d.lower() for d in (data.get("highlighted") or [])}
+    n_series = len(series)
+    group_width = 0.82
+    bar_width = group_width / n_series
+    positions = range(len(categories))
+
+    fig, ax = plt.subplots(figsize=(9, 4.2))
+    for idx, s in enumerate(series):
+        offset = -group_width / 2 + bar_width * (idx + 0.5)
+        ax.bar(
+            [p + offset for p in positions],
+            s.get("values") or [],
+            width=bar_width * 0.92,
+            label=s.get("label", ""),
+            color=SERIES_PALETTE[idx % len(SERIES_PALETTE)],
+            edgecolor="white",
+            linewidth=0.4,
+            zorder=3,
+        )
+
+    # Shade the days the plan actually buys, so the day column in the lineup
+    # can be checked against the evidence at a glance.
+    for i, day in enumerate(categories):
+        if day.lower() in highlighted:
+            ax.axvspan(i - 0.5, i + 0.5, color=ACCENT, alpha=0.10, zorder=0)
+
+    ax.set_xticks(list(positions))
+    ax.set_xticklabels(categories, fontsize=8.5)
+    ax.yaxis.set_major_formatter(FuncFormatter(_thousands))
+    _style(
+        ax,
+        title=data.get("title", "Audience by day of week"),
+        subtitle=data.get("subtitle"),
+        ylabel=data.get("y_label", "Ratings"),
+    )
+    ax.legend(
+        frameon=False, fontsize=7.5, ncol=min(4, n_series),
+        loc="upper center", bbox_to_anchor=(0.5, -0.13),
+    )
+    if highlighted:
+        ax.annotate(
+            "Shaded = days in the recommended plan",
+            xy=(1, 1), xytext=(0, 8), xycoords="axes fraction",
+            textcoords="offset points", fontsize=7.5, color="#6B7280", ha="right", va="bottom",
+        )
+    return _save(fig, path)
+
+
 def render_all(chart_data, out_dir):
     """Render every chart, returning a name -> path map."""
     os.makedirs(out_dir, exist_ok=True)
     return {
         "competitor_spend": competitor_spend_chart(chart_data.get("competitor_spend") or {}, out_dir),
         "programme_ratings": programme_rating_chart(chart_data.get("programme_ratings") or {}, out_dir),
+        "day_of_week": day_of_week_chart(chart_data.get("day_of_week") or {}, out_dir),
         "medium_split": medium_split_chart(chart_data.get("medium_split") or {}, out_dir),
     }
