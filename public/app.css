@@ -150,6 +150,14 @@ h3 { font-size: 13.5px; margin: 18px 0 4px; text-transform: uppercase; letter-sp
 .budget.over { background: #fdf2f1; color: #7d3a33; }
 .budget b { font-size: 16px; }
 
+.banner {
+  border: 1px solid #e6b8b2; border-left: 4px solid var(--bad);
+  background: #fdf2f1; color: #7d3a33;
+  padding: 13px 16px; border-radius: var(--radius); margin-bottom: 20px;
+  font-size: 13.5px;
+}
+.hintline { margin-top: 5px; font-size: 12.5px; opacity: .9; }
+
 .foot { color: var(--muted); font-size: 12px; padding-bottom: 30px; }
 
 @media (max-width: 720px) {

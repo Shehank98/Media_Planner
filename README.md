@@ -66,6 +66,24 @@ npm start
 `GET /health` reports the database, the active LLM provider, the Python report
 worker and the sync scheduler — check it first when something looks wrong.
 
+### When the app comes up broken
+
+`/health` answers `503` and `/api/facets` answers `503` when the database is
+unreachable. **Read the response body, not the status code** — it names the
+cause and what to change:
+
+```bash
+curl -s https://your-app.up.railway.app/health | jq .db
+# { "ok": false,
+#   "error": "TLS negotiation with the database failed (self signed certificate).",
+#   "hint":  "Set PGSSL=true. Railway's Postgres uses a self-signed certificate…" }
+```
+
+The UI shows the same explanation as a banner across the top. The usual causes
+are `DATABASE_URL` unset, `PGSSL` not set to `true` on Railway, or a
+`localhost` host inside a container — where localhost is the container, not the
+database.
+
 ### Environment
 
 | Variable | Purpose |

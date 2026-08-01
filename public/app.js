@@ -31,8 +31,47 @@ async function api(path, options = {}) {
   const text = await res.text();
   let body;
   try { body = text ? JSON.parse(text) : {}; } catch { body = { error: text.slice(0, 400) }; }
-  if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
+  if (!res.ok) {
+    // The server explains dependency failures in the body ("PGSSL must be
+    // true", "the schema has not been applied"). Throwing away that body and
+    // reporting the status code alone is how a fixable problem turns into a
+    // mystery, so the hint is carried through to whatever renders the error.
+    const err = new Error(body.error || `Request failed (${res.status})`);
+    err.status = res.status;
+    err.hint = body.hint || null;
+    err.dependency = body.dependency || null;
+    throw err;
+  }
   return body;
+}
+
+/** Render an error with its remediation hint, when the server supplied one. */
+function showError(container, err) {
+  container.innerHTML = '';
+  const box = el('div', { class: 'note err' }, err.message);
+  if (err.hint) box.append(el('div', { class: 'hintline' }, err.hint));
+  container.append(box);
+}
+
+/**
+ * Banner for a failed dependency, pinned above the page.
+ *
+ * When the database is unreachable every section fails at once; one clear
+ * explanation at the top beats the same error repeated in four places.
+ */
+function setBanner(message, hint) {
+  let banner = $('#banner');
+  if (!message) {
+    if (banner) banner.remove();
+    return;
+  }
+  if (!banner) {
+    banner = el('div', { id: 'banner', class: 'banner' });
+    document.querySelector('main').prepend(banner);
+  }
+  banner.innerHTML = '';
+  banner.append(el('strong', {}, 'The app cannot reach its database. '), message);
+  if (hint) banner.append(el('div', { class: 'hintline' }, hint));
 }
 
 function notes(container, items, kind = 'note') {
@@ -44,19 +83,30 @@ function notes(container, items, kind = 'note') {
 
 async function loadHealth() {
   const box = $('#status');
+  box.innerHTML = '';
+
+  // /health answers 503 when a dependency is down, and the body is the whole
+  // point of the call - so read it rather than treating the status as a
+  // failure to fetch.
+  let h;
   try {
-    const h = await api('/health');
-    const ok = h.ok && h.db.ok;
-    box.innerHTML = '';
-    box.append(
-      el('span', { class: `dot ${ok ? 'ok' : 'bad'}` }),
-      `${h.llm.model || h.llm.provider}`,
-      h.report_worker?.ok ? ' · PDF ready' : ' · PDF worker unavailable',
-    );
+    const res = await fetch('/health');
+    h = await res.json();
   } catch (err) {
-    box.innerHTML = '';
-    box.append(el('span', { class: 'dot bad' }), `offline: ${err.message}`);
+    box.append(el('span', { class: 'dot bad' }), 'server unreachable');
+    setBanner(`The server did not respond (${err.message}).`,
+      'Check the service is running and that you are on the right URL.');
+    return;
   }
+
+  const ok = Boolean(h.ok && h.db?.ok);
+  box.append(
+    el('span', { class: `dot ${ok ? 'ok' : 'bad'}` }),
+    h.llm?.model || h.llm?.provider || 'llm unknown',
+    h.report_worker?.ok ? ' · PDF ready' : ' · PDF worker unavailable',
+  );
+
+  setBanner(ok ? null : h.db?.error, h.db?.hint);
 }
 
 // --- facets ----------------------------------------------------------------
@@ -90,8 +140,10 @@ async function loadFacets() {
       $('#brief-form').target_audience.value = r.audiences[0];
     }
   } catch (err) {
-    box.innerHTML = '';
-    box.append(el('div', { class: 'note err' }, err.message));
+    // The banner already carries the explanation when the database is the
+    // cause; repeating it here would just be noise.
+    if (err.dependency === 'database') box.innerHTML = '';
+    else showError(box, err);
   }
 }
 
@@ -137,7 +189,7 @@ $('#upload-form').addEventListener('submit', async (e) => {
 
     await loadFacets();
   } catch (err) {
-    notes(out, [err.message], 'note err');
+    showError(out, err);
   } finally {
     button.disabled = false;
     button.textContent = 'Upload & parse';
@@ -177,7 +229,7 @@ $('#brief-upload-form').addEventListener('submit', async (e) => {
     ]);
     if (!r.warnings?.length) out.firstChild.className = 'note ok';
   } catch (err) {
-    notes(out, [err.message], 'note err');
+    showError(out, err);
   } finally {
     button.disabled = false;
     button.textContent = 'Parse PDF';
@@ -223,7 +275,7 @@ $('#brief-form').addEventListener('submit', async (e) => {
     $('#plan-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   } catch (err) {
     saved.className = 'saved err';
-    saved.textContent = err.message;
+    saved.textContent = err.hint ? `${err.message} ${err.hint}` : err.message;
   }
 });
 
@@ -281,7 +333,7 @@ $('#preview-btn').addEventListener('click', async () => {
       ));
     }
   } catch (err) {
-    notes(out, [err.message], 'note err');
+    showError(out, err);
   }
 });
 
@@ -316,7 +368,7 @@ $('#generate-btn').addEventListener('click', async () => {
     $('#result-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (err) {
     status.className = 'saved err';
-    status.textContent = err.message;
+    status.textContent = err.hint ? `${err.message} ${err.hint}` : err.message;
   } finally {
     button.disabled = false;
   }

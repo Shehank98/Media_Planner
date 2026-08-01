@@ -6,6 +6,7 @@ import { log } from './util/logger.js';
 import { migrate, pool, close } from './db.js';
 import { startScheduler, stopScheduler } from './sync/scheduler.js';
 import { asyncRoute } from './util/asyncRoute.js';
+import { describeDbError, isDbError } from './util/dbError.js';
 import { getAdapter } from './llm/index.js';
 import { healthCheck as ollamaHealth } from './llm/ollama.js';
 import { reportWorkerHealth } from './services/reportService.js';
@@ -44,10 +45,13 @@ app.use((req, res, next) => {
 app.get('/health', asyncRoute(async (_req, res) => {
   const checks = { db: { ok: false }, llm: { provider: config.llm.provider } };
   try {
-    await pool.query('SELECT 1');
+    // Confirms the schema is applied, not just that the socket opened - a
+    // connected database with no tables fails every real request.
+    await pool.query('SELECT count(*) FROM adex_data');
     checks.db = { ok: true };
   } catch (err) {
-    checks.db = { ok: false, error: err.message };
+    const described = describeDbError(err);
+    checks.db = { ok: false, error: described.message, hint: described.hint, code: err.code };
   }
 
   try {
@@ -95,6 +99,21 @@ app.use((err, _req, res, _next) => {
       : err.message;
     return res.status(400).json({ error: message, code: err.code });
   }
+
+  // A database that is down is a failed dependency, not a bug in the request.
+  // 503 says "try again once the database is back" where 500 says "this is
+  // broken", and the described cause travels with it so the UI can show it.
+  if (isDbError(err)) {
+    const described = describeDbError(err);
+    log.error('database unavailable', { err, code: err.code });
+    return res.status(503).json({
+      error: described.message,
+      hint: described.hint,
+      code: err.code,
+      dependency: 'database',
+    });
+  }
+
   const status = err.status || 500;
   if (status >= 500) log.error('unhandled request error', { err });
   res.status(status).json({ error: err.message || 'Internal server error' });
@@ -108,9 +127,18 @@ for (const problem of problems) log.warn('configuration problem', { problem });
 try {
   await migrate();
 } catch (err) {
-  log.error('could not apply the schema on boot', { err });
-  // Keep serving: /health will report the database as down, which is more
-  // useful than a container that crash-loops before anyone can read the logs.
+  const described = describeDbError(err);
+  // The single most useful line in the logs when a deploy comes up broken, so
+  // it says what to do rather than just what failed.
+  log.error('could not apply the schema on boot - the app will serve but every '
+    + 'data request will fail until this is fixed', {
+    reason: described.message,
+    fix: described.hint,
+    code: err.code,
+  });
+  // Keep serving: /health reports the database as down with the same
+  // explanation, which is more useful than a container that crash-loops before
+  // anyone can read the logs.
 }
 
 startScheduler();
