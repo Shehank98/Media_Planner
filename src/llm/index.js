@@ -1,6 +1,7 @@
 import { config } from '../config.js';
 import { log } from '../util/logger.js';
 import { normaliseResult, groundLineup, costPlan } from './schema.js';
+import { describeLlmError } from './errors.js';
 import * as gemini from './gemini.js';
 import * as ollama from './ollama.js';
 
@@ -38,7 +39,21 @@ export async function analyzeAndRecommend(brief, aggregatedData, opts = {}) {
   const adapter = getAdapter(provider);
 
   log.info('llm call started', { provider, model: adapter.modelId() });
-  const { raw, meta } = await adapter.analyze(brief, aggregatedData);
+
+  let raw;
+  let meta;
+  try {
+    ({ raw, meta } = await adapter.analyze(brief, aggregatedData));
+  } catch (err) {
+    // Every provider failure reaches the caller as an LlmError carrying a
+    // status and a remedy, so the route can answer with something better than
+    // a 500 and an opaque message.
+    const described = describeLlmError(err, provider);
+    log.error('llm call failed', {
+      provider, model: adapter.modelId(), reason: described.message, fix: described.hint,
+    });
+    throw described;
+  }
 
   const normalised = normaliseResult(raw);
   const grounded = groundLineup(normalised, aggregatedData);

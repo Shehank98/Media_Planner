@@ -95,3 +95,124 @@ test('brief parsing saves nothing by itself', () => {
   assert.ok(Array.isArray(parsed.warnings));
   assert.ok(parsed.lines.length > 0, 'the extracted text is returned for review');
 });
+
+// --- diagnosing a brief that yields nothing ---------------------------------
+
+test('a scanned PDF is identified as having no text layer', async () => {
+  // The most common real failure, and the one that looks identical to an
+  // unfamiliar layout unless it is called out.
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'mp-scan-'));
+  try {
+    const pdfPath = path.join(dir, 'scan.pdf');
+    await runPy(`
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import mm
+c = canvas.Canvas("${pdfPath}", pagesize=A4)
+c.setFillColorRGB(0.85,0.85,0.85); c.rect(20*mm,100*mm,170*mm,150*mm,fill=1,stroke=0)
+c.showPage(); c.save()`);
+
+    const r = await parseBriefPdf(await fs.readFile(pdfPath), { sourceFile: 'scan.pdf' });
+    assert.equal(r.extraction.has_text_layer, false);
+    assert.equal(r.extraction.word_count, 0);
+    assert.match(r.warnings[0], /no extractable text/i);
+    assert.match(r.warnings[0], /scan/i, 'names the cause, not just the symptom');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('an unfamiliar layout is distinguished from a scan', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'mp-labels-'));
+  try {
+    const pdfPath = path.join(dir, 'other.pdf');
+    await runPy(`
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import mm
+c = canvas.Canvas("${pdfPath}", pagesize=A4)
+t = c.beginText(25*mm, 260*mm); t.setFont("Helvetica", 11)
+for line in ["QUARTERLY REVIEW DECK","","Some prose about last quarter's results that",
+             "contains no brief labels at all but plenty of words to read,",
+             "well past the threshold that would suggest a scanned page.",
+             "More filler text follows here to push the word count up further."]:
+    t.textLine(line)
+c.drawText(t); c.showPage(); c.save()`);
+
+    const r = await parseBriefPdf(await fs.readFile(pdfPath), { sourceFile: 'other.pdf' });
+    assert.equal(r.extraction.has_text_layer, true, 'text was read');
+    assert.equal(r.extraction.fields_matched, 0, 'but no labels matched');
+    assert.match(r.warnings[0], /none of the expected labels/i);
+    assert.ok(!/scan/i.test(r.warnings[0]), 'must not blame a scan when text was readable');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('brief parser reads an agency brief that uses different wording', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'mp-agency-'));
+  try {
+    const pdfPath = path.join(dir, 'agency.pdf');
+    await runPy(`
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import mm
+c = canvas.Canvas("${pdfPath}", pagesize=A4)
+t = c.beginText(25*mm, 260*mm); t.setFont("Helvetica", 11)
+for line in ["MEDIA REQUISITION FORM","",
+  "Account          : Unilever Sri Lanka",
+  "Product Line     : Sunsilk Shampoo",
+  "Comms Task       : drive trial among young women in the Western province",
+  "Who we are after : SEC AB Females, 18 to 34 years",
+  "Money available  : Rs. 42,00,000",
+  "On air           : 15 September through 31 October"]:
+    t.textLine(line)
+c.drawText(t); c.showPage(); c.save()`);
+
+    const r = await parseBriefPdf(await fs.readFile(pdfPath), { sourceFile: 'agency.pdf' });
+    assert.equal(r.fields.brand, 'Sunsilk Shampoo', '"Product Line" is a brand');
+    assert.equal(r.fields.advertiser, 'Unilever Sri Lanka', '"Account" is the advertiser');
+    assert.equal(r.fields.target_audience, 'SEC AB Females, 18 to 34 years');
+    assert.match(r.fields.objective, /drive trial/);
+    // "42,00,000" is lakh notation: 42 lakhs, not 4,200 thousand.
+    assert.equal(r.fields.budget_lkr_lakhs, 42);
+    assert.ok(r.fields.period_start, 'a year-less date range still resolves');
+    assert.ok(
+      r.warnings.some((w) => /gave no year/.test(w)),
+      'the inferred year is flagged rather than passed off as read',
+    );
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('parsePeriod infers a forward-looking year when none is given', () => {
+  const today = new Date('2026-08-01T00:00:00Z');
+  // September is ahead of August, so this year.
+  const soon = parsePeriod('15 September to 31 October', { today });
+  assert.equal(soon.start, '2026-09-15');
+  assert.equal(soon.end, '2026-10-31');
+  assert.equal(soon.yearInferred, 2026);
+
+  // February is well behind August: a brief means next February, not last.
+  const next = parsePeriod('1 February to 28 February', { today });
+  assert.equal(next.start, '2027-02-01');
+});
+
+test('parsePeriod handles a year-less range that crosses new year', () => {
+  const today = new Date('2026-08-01T00:00:00Z');
+  const period = parsePeriod('15 December to 20 January', { today });
+  assert.equal(period.start, '2026-12-15');
+  assert.equal(period.end, '2027-01-20', 'the end rolls into the following year');
+});
+
+/** Run a short reportlab snippet to build a fixture PDF. */
+function runPy(source) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.env.PYTHON_BIN || 'python3', ['-c', source]);
+    let stderr = '';
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.on('error', reject);
+    child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(stderr))));
+  });
+}

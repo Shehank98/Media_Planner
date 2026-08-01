@@ -84,6 +84,17 @@ are `DATABASE_URL` unset, `PGSSL` not set to `true` on Railway, or a
 `localhost` host inside a container — where localhost is the container, not the
 database.
 
+Model failures behave the same way. A rejected key, an exhausted quota, an
+unreachable Ollama and an empty response all answer with their own status and a
+remedy rather than a generic `500`. Generating a plan with nothing loaded
+answers `409` and refuses **before** spending a model call, because a plan
+grounded in no data can only be invented.
+
+Uploads name what they could not read. A file that matches none of the three
+recognised shapes is reported per-file with the sheets that were inspected, and
+a brief PDF that yields nothing says whether it had a text layer at all — which
+separates "this is a scan, it needs OCR" from "my brief uses different labels".
+
 ### Environment
 
 | Variable | Purpose |
@@ -93,6 +104,8 @@ database.
 | `LLM_PROVIDER` | `gemini` (Phase 1) or `ollama` (Phase 2). The only line that changes. |
 | `GEMINI_API_KEY` | From [Google AI Studio](https://aistudio.google.com/apikey). |
 | `GEMINI_MODEL` | Default `gemini-2.5-flash`. |
+| `GEMINI_MAX_OUTPUT_TOKENS` | Default `8192`. A costed lineup runs long. |
+| `GEMINI_THINKING_BUDGET` | Default `0` (off). On 2.5 models thinking spends the output allowance and can return an empty response. |
 | `OLLAMA_BASE_URL` | Your machine, reached over a Cloudflare Tunnel. |
 | `OLLAMA_MODEL` | Default `qwen2.5:7b-instruct-q4_K_M`. |
 | `GDRIVE_FOLDER_ID` | The Drive folder holding adex workbooks. |
@@ -131,7 +144,7 @@ client has already seen doesn't shift under them.
 | `GET` | `/api/facets` | Filter values (sectors, categories, languages, audiences). |
 | `POST` | `/api/sync/now` | "Sync now". `?force=true` re-ingests unchanged files. |
 | `GET` | `/api/sync/status` | Running state, adex coverage, recent runs. |
-| `POST` | `/api/uploads/tv` | MICOS exports and media watch logs. Session-only. |
+| `POST` | `/api/uploads/tv` | MICOS exports, media watch logs and adex workbooks. Session-only. |
 | `DELETE` | `/api/uploads/tv?confirm=true` | Clear ratings before a new survey. |
 | `POST` | `/api/briefs/parse` | Parse a brief PDF. Saves nothing. |
 | `POST` | `/api/briefs` | Save the confirmed brief. |

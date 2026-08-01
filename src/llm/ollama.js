@@ -1,6 +1,7 @@
 import { config } from '../config.js';
 import { SYSTEM_PROMPT } from './systemPrompt.js';
 import { parseModelJson } from './schema.js';
+import { LlmError } from './errors.js';
 
 // Phase 2 provider. Same system prompt, same input, same output shape as the
 // Gemini adapter - switching is LLM_PROVIDER=ollama and nothing else.
@@ -48,19 +49,29 @@ export async function analyze(brief, aggregatedData) {
     });
   } catch (err) {
     if (err.name === 'AbortError') {
-      throw new Error(
-        `Ollama did not respond within ${timeoutMs}ms at ${baseUrl}. ` +
-        'On CPU-only hardware, either raise OLLAMA_TIMEOUT_MS or move to a smaller model.',
-      );
+      throw new LlmError(`Ollama did not respond within ${timeoutMs}ms at ${baseUrl}.`, {
+        hint: 'CPU-only inference is slow. Raise OLLAMA_TIMEOUT_MS, or move to a smaller model '
+          + '(llama3.2:3b-instruct).',
+        status: 504, provider: 'ollama', cause: err,
+      });
     }
-    throw new Error(`Could not reach Ollama at ${baseUrl}: ${err.message}`);
+    throw new LlmError(`Could not reach Ollama at ${baseUrl}: ${err.message}`, {
+      hint: 'Check OLLAMA_BASE_URL and that the Cloudflare Tunnel is up. Switch '
+        + 'LLM_PROVIDER=gemini to fall back to the hosted model.',
+      status: 503, provider: 'ollama', cause: err,
+    });
   } finally {
     clearTimeout(timer);
   }
 
   if (!response.ok) {
     const body = await response.text().catch(() => '');
-    throw new Error(`Ollama returned ${response.status}: ${body.slice(0, 500)}`);
+    throw new LlmError(`Ollama returned ${response.status}: ${body.slice(0, 300)}`, {
+      hint: response.status === 404
+        ? `The model "${model}" is not pulled. Run: ollama pull ${model}`
+        : null,
+      status: 502, provider: 'ollama',
+    });
   }
 
   const payload = await response.json();
@@ -73,8 +84,17 @@ export async function analyze(brief, aggregatedData) {
   const tokensPerSec =
     outputTokens && evalNs ? +(outputTokens / (evalNs / 1e9)).toFixed(1) : null;
 
+  const content = payload.message?.content;
+  if (!content || !String(content).trim()) {
+    throw new LlmError(`${model} returned an empty response.`, {
+      hint: 'Retry. If it repeats, the context may be too small for the payload - raise '
+        + 'OLLAMA_NUM_CTX or lower the programme shortlist size.',
+      status: 502, provider: 'ollama',
+    });
+  }
+
   return {
-    raw: parseModelJson(payload.message?.content),
+    raw: parseModelJson(content),
     meta: {
       provider: 'ollama',
       model,

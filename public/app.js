@@ -168,10 +168,18 @@ $('#upload-form').addEventListener('submit', async (e) => {
     out.innerHTML = '';
 
     const p = r.persisted;
+    // Only report the datasets this upload actually contained - listing five
+    // zeroes for a single adex file reads as failure.
+    const loaded = [
+      [p.programmes, 'programmes'],
+      [p.dayparts, 'day/day-part rows'],
+      [p.spots, 'competitor spots'],
+      [p.media_watch_spots, 'media watch spots'],
+      [p.adex_rows, 'adex rows'],
+    ].filter(([n]) => n).map(([n, label]) => `${fmt(n)} ${label}`);
     out.append(el('div', { class: 'note ok' },
-      `Loaded ${fmt(p.programmes)} programmes, ${fmt(p.dayparts)} day/day-part rows, ` +
-      `${fmt(p.spots)} competitor spots, ${fmt(p.media_watch_spots)} media watch spots ` +
-      `across ${fmt(p.channels)} channels.` +
+      `Loaded ${loaded.join(', ') || 'nothing new'}` +
+      (p.channels ? ` across ${fmt(p.channels)} channels` : '') + '.' +
       (r.target_audience ? ` Audience panel: ${r.target_audience}.` : '')));
 
     const table = el('table', {},

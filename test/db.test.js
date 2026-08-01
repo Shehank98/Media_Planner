@@ -276,3 +276,50 @@ test('a brief with no period is allowed', { skip }, async () => {
   assert.equal(brief.period_start, null);
   assert.equal(brief.period_end, null);
 });
+
+// --- upload classification --------------------------------------------------
+
+test('an adex workbook is recognised rather than rejected', { skip }, async () => {
+  // Adex normally arrives by Drive sync, but the same workbooks get handed over
+  // directly. Refusing them left no way to load adex without service-account
+  // setup, and produced a 422 that named no cause.
+  const { parseAdexWorkbook: parse } = await import('../src/parsers/adexParser.js');
+  const { rows } = await parse(await fx.adexWorkbook(), { sourceFile: 'adex.xlsx' });
+  assert.ok(rows.length > 0, 'the adex parser claims the file');
+
+  // And nothing else does, so classification order is unambiguous.
+  const micos = await parseMicosWorkbook(await fx.adexWorkbook());
+  assert.equal(micos.programmes.length + micos.spots.length + micos.channelDays.length, 0);
+  const mw = await parseMediaWatch(await fx.adexWorkbook(), { sourceFile: 'adex.xlsx' });
+  assert.equal(mw.spots.length, 0);
+});
+
+test('generating a plan with nothing loaded refuses before the model call', { skip }, async () => {
+  const { generatePlan } = await import('../src/services/planService.js');
+  const brief = await briefRepo.insertBrief({ brand: 'Sunsilk', budget_lkr_lakhs: 250 });
+
+  await assert.rejects(
+    () => generatePlan(brief.id),
+    (err) => {
+      assert.equal(err.status, 409, 'a conflict with the current state, not a server fault');
+      assert.match(err.message, /no ratings or spend data/i);
+      assert.match(err.hint, /Upload a MICOS dashboard export/);
+      return true;
+    },
+    'an empty database must not cost a model call',
+  );
+});
+
+test('a plan can be generated once any data is loaded', { skip }, async () => {
+  // The guard must not block the legitimate case where only adex is present.
+  const { rows } = await parseAdexWorkbook(await fx.adexWorkbook());
+  await adexRepo.upsertAdexRows(rows);
+
+  const { buildAggregatedData } = aggregate;
+  const brief = await briefRepo.insertBrief({ brand: 'Cavin Kare', budget_lkr_lakhs: 250 });
+  const data = await buildAggregatedData(brief);
+  assert.ok(
+    data.own_brand_trend.length > 0 || data.competitor_spend_by_quarter.length > 0,
+    'adex alone is enough to ground a plan',
+  );
+});

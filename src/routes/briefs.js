@@ -35,6 +35,9 @@ router.post('/parse', upload.single('file'), asyncRoute(async (req, res) => {
       fields: result.fields,
       matched_labels: result.confidence,
       warnings: result.warnings,
+      // Says whether the PDF had a text layer at all, which separates "this is
+      // a scan" from "my labels differ from yours".
+      extraction: result.extraction,
       // Handy when a field was missed and someone needs to see what the PDF
       // actually contained.
       extracted_lines: result.lines.slice(0, 200),

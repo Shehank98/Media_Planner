@@ -56,6 +56,13 @@ export const config = {
       apiKey: process.env.GEMINI_API_KEY,
       model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
       temperature: num(process.env.GEMINI_TEMPERATURE, 0.3),
+      // A full costed lineup with rationales runs long; the default cap
+      // truncates it mid-JSON.
+      maxOutputTokens: int(process.env.GEMINI_MAX_OUTPUT_TOKENS, 8192),
+      // gemini-2.5-* spends thinking tokens from the same output allowance, so
+      // an unbounded budget can consume the whole response and return no text.
+      // 0 disables thinking; set -1 for the model's dynamic default.
+      thinkingBudget: int(process.env.GEMINI_THINKING_BUDGET, 0),
     },
     ollama: {
       baseUrl: (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/+$/, ''),

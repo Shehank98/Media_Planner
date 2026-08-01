@@ -20,19 +20,21 @@
   <!-- 1 ------------------------------------------------------------------ -->
   <section class="card">
     <div class="card-head">
-      <h2><span class="step">1</span> Ratings &amp; cost data</h2>
+      <h2><span class="step">1</span> Data</h2>
       <button id="refresh-facets" class="ghost" type="button">Refresh</button>
     </div>
     <p class="hint">
-      MICOS dashboard exports (TV_ChannelDetails / TV_GrpDetails) and media watch spot logs.
-      Files are parsed in memory and never written to disk — only the extracted numbers are kept.
+      MICOS dashboard exports (TV_ChannelDetails / TV_GrpDetails), media watch spot logs, and
+      adex workbooks. Each file is recognised by its contents, so upload them together in any
+      order. Files are parsed in memory and never written to disk — only the extracted numbers
+      are kept.
     </p>
     <form id="upload-form">
       <label class="drop" for="tv-files">
         <input type="file" id="tv-files" name="files" multiple
                accept=".xlsx,.xlsm,.xls,.csv,.tsv,.txt">
         <span>Choose files or drop them here</span>
-        <small id="tv-files-label">.xlsx exports and .csv/.tsv media watch logs</small>
+        <small id="tv-files-label">.xlsx exports, or .csv/.tsv spot logs</small>
       </label>
       <button type="submit" class="primary">Upload &amp; parse</button>
     </form>

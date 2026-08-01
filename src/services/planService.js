@@ -20,6 +20,23 @@ export async function generatePlan(briefId, opts = {}) {
   const started = Date.now();
   const aggregated = await buildAggregatedData(brief, opts);
 
+  // Refuse before spending a model call. With nothing loaded the model can only
+  // invent a lineup or decline, and either way the planner learns nothing they
+  // could not be told here for free.
+  const hasRatings = (aggregated.programme_ratings || []).length > 0;
+  const hasAdex = (aggregated.competitor_spend_by_quarter || []).length > 0
+    || (aggregated.own_brand_trend || []).length > 0;
+  if (!hasRatings && !hasAdex && !opts.force) {
+    throw Object.assign(
+      new Error('There is no ratings or spend data loaded, so a plan cannot be grounded in anything.'),
+      {
+        status: 409,
+        hint: 'Upload a MICOS dashboard export under "Ratings & cost data" first, or sync the '
+          + 'adex workbooks. Use "Preview data" to see what is currently loaded.',
+      },
+    );
+  }
+
   const modelInput = briefForModel(brief);
   const recommendation = await analyzeAndRecommend(modelInput, aggregated, opts);
 

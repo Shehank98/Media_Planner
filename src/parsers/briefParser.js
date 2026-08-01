@@ -131,14 +131,29 @@ function groupIntoCells(items) {
 // Label wordings seen on real briefs. First match wins, so order matters:
 // more specific labels come before the ones they'd be a substring of.
 const LABELS = {
-  brand: ['brand name', 'brand', 'product brand'],
-  advertiser: ['advertiser', 'client name', 'client', 'company'],
-  objective: ['campaign objective', 'objective', 'objectives', 'campaign goal', 'purpose', 'brief objective'],
-  target_audience: ['target audience', 'target group', 'audience', 'tg', 'target market', 'demographic'],
-  budget_lkr_lakhs: ['budget', 'total budget', 'campaign budget', 'budget lkr', 'investment', 'media budget'],
+  brand: ['brand name', 'brand', 'product brand', 'product line', 'product', 'sku'],
+  advertiser: ['advertiser', 'client name', 'client', 'company', 'account', 'account name'],
+  objective: [
+    'campaign objective', 'communication objective', 'comms objective', 'comms task',
+    'objective', 'objectives', 'campaign goal', 'purpose', 'brief objective', 'task',
+    'what we need to do', 'background and objective',
+  ],
+  target_audience: [
+    'target audience', 'target group', 'target consumer', 'audience', 'tg', 'target market',
+    'demographic', 'demographics', 'who we are after', 'who we are talking to', 'consumer',
+    'core target', 'primary target',
+  ],
+  budget_lkr_lakhs: [
+    'budget', 'total budget', 'campaign budget', 'budget lkr', 'investment', 'media budget',
+    'money available', 'budget available', 'spend', 'total spend', 'net budget', 'gross budget',
+  ],
   language: ['language', 'languages', 'medium language'],
-  territory: ['territory', 'territories', 'region', 'coverage', 'market', 'geography'],
-  campaign_period: ['campaign period', 'period', 'duration', 'campaign duration', 'flight', 'timeline', 'campaign dates'],
+  territory: ['territory', 'territories', 'region', 'coverage', 'market', 'geography', 'footprint'],
+  campaign_period: [
+    'campaign period', 'period', 'duration', 'campaign duration', 'flight', 'flight dates',
+    'timeline', 'campaign dates', 'on air', 'on air dates', 'burst', 'burst period',
+    'activity period', 'when',
+  ],
 };
 
 const MEDIUM_KEYS = {
@@ -184,7 +199,14 @@ export async function parseBriefPdf(buffer, { sourceFile = null } = {}) {
       const period = parsePeriod(hit.value);
       fields.period_start = period.start;
       fields.period_end = period.end;
-      if (!period.start) warnings.push(`Could not read dates from campaign period: "${hit.value}"`);
+      if (!period.start) {
+        warnings.push(`Could not read dates from campaign period: "${hit.value}"`);
+      } else if (period.yearInferred) {
+        warnings.push(
+          `Campaign period "${hit.value}" gave no year; ${period.yearInferred} was assumed. `
+          + 'Confirm this.',
+        );
+      }
     } else if (field === 'budget_lkr_lakhs') {
       const budget = parseBudget(hit.value);
       fields.budget_lkr_lakhs = budget.value;
@@ -212,13 +234,63 @@ export async function parseBriefPdf(buffer, { sourceFile = null } = {}) {
     }
   }
 
-  for (const key of ['brand', 'objective', 'target_audience', 'budget_lkr_lakhs']) {
-    if (fields[key] === null) {
-      warnings.push(`Could not find "${key}" in the brief - please fill it in before saving.`);
+  // Diagnose a wholesale failure rather than listing every field separately.
+  // "Could not find brand / objective / audience / budget" four times over says
+  // nothing about why, and the two causes need completely different responses.
+  const wordCount = texts.join(' ').split(/\s+/).filter(Boolean).length;
+  const diagnosis = diagnose(texts, wordCount, Object.keys(found).length);
+  if (diagnosis) {
+    warnings.unshift(diagnosis);
+  } else {
+    for (const key of ['brand', 'objective', 'target_audience', 'budget_lkr_lakhs']) {
+      if (fields[key] === null) {
+        warnings.push(`Could not find "${key}" in the brief - please fill it in before saving.`);
+      }
     }
   }
 
-  return { fields, confidence: found, lines: texts, warnings };
+  return {
+    fields,
+    confidence: found,
+    lines: texts,
+    warnings,
+    // Enough for someone to tell "the PDF is an image" from "my labels differ"
+    // without having to open the file alongside.
+    extraction: {
+      pages: lines.length ? Math.max(...lines.map((l) => l.page)) : 0,
+      text_lines: texts.length,
+      word_count: wordCount,
+      fields_matched: Object.keys(found).length,
+      has_text_layer: wordCount > 0,
+    },
+  };
+}
+
+/**
+ * Why did this brief yield nothing?
+ *
+ * A scanned brief and an unfamiliar layout both produce an empty form, but one
+ * needs OCR and the other needs a label added to LABELS. Telling them apart is
+ * the difference between a two-minute fix and an afternoon.
+ */
+function diagnose(texts, wordCount, matchedCount) {
+  if (!texts.length || wordCount === 0) {
+    return 'This PDF contains no extractable text - it is almost certainly a scan or an '
+      + 'exported image. Nothing can be read from it automatically; either supply a '
+      + 'text-based PDF (print/export to PDF rather than scanning) or fill the form in by hand.';
+  }
+  if (wordCount < 25) {
+    return `Only ${wordCount} words could be extracted from this PDF, which is far less than a `
+      + 'brief should contain. It may be mostly images, or text stored as outlines. Fill the '
+      + 'form in by hand, or supply a text-based PDF.';
+  }
+  if (matchedCount === 0) {
+    return `Text was read from this PDF (${wordCount} words) but none of the expected labels `
+      + '- Brand, Objective, Target Audience, Budget, Campaign Period - were found. The brief '
+      + 'likely uses different wording. Fill the form in by hand; the extracted text is '
+      + 'returned in "extracted_lines" if you want to check what it actually says.';
+  }
+  return null;
 }
 
 /**
@@ -296,22 +368,66 @@ const DATE_TOKEN =
   '|\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}' +
   '|[A-Za-z]{3,9}[\\s-]+\\d{4}';
 
-export function parsePeriod(value) {
+// Briefs routinely omit the year - "15 September to 31 October" is unambiguous
+// to a planner reading it in August and useless to a parser. Matched
+// separately so the inferred year can be flagged rather than passed off as read.
+const DATE_NO_YEAR =
+  '\\d{1,2}(?:st|nd|rd|th)?\\s+[A-Za-z]{3,9}|[A-Za-z]{3,9}\\s+\\d{1,2}(?:st|nd|rd|th)?';
+
+const SEPARATOR = '(?:to|until|till|through|-|–|—)';
+
+export function parsePeriod(value, { today = new Date() } = {}) {
   if (!value) return { start: null, end: null };
-  const re = new RegExp(`(${DATE_TOKEN})\\s*(?:to|until|till|through|-|–|—)\\s*(${DATE_TOKEN})`, 'i');
-  const m = String(value).match(re);
-  if (m) {
+  const text = String(value);
+
+  const ranged = text.match(
+    new RegExp(`(${DATE_TOKEN})\\s*${SEPARATOR}\\s*(${DATE_TOKEN})`, 'i'),
+  );
+  if (ranged) {
     return {
-      start: toDate(stripOrdinals(m[1]), { snapToMonthStart: false }),
-      end: toDate(stripOrdinals(m[2]), { snapToMonthStart: false }),
+      start: toDate(stripOrdinals(ranged[1]), { snapToMonthStart: false }),
+      end: toDate(stripOrdinals(ranged[2]), { snapToMonthStart: false }),
     };
   }
-  const single = String(value).match(new RegExp(`(${DATE_TOKEN})`, 'i'));
+
+  // Year-less range: infer one, and say so.
+  const bare = text.match(new RegExp(`(${DATE_NO_YEAR})\\s*${SEPARATOR}\\s*(${DATE_NO_YEAR})`, 'i'));
+  if (bare) {
+    const year = inferYear(bare[1], today);
+    if (year) {
+      const start = toDate(`${stripOrdinals(bare[1])} ${year}`);
+      // A range that runs backwards has crossed a year boundary
+      // ("15 December to 20 January").
+      let end = toDate(`${stripOrdinals(bare[2])} ${year}`);
+      if (start && end && end < start) end = toDate(`${stripOrdinals(bare[2])} ${year + 1}`);
+      if (start) return { start, end, yearInferred: year };
+    }
+  }
+
+  const single = text.match(new RegExp(`(${DATE_TOKEN})`, 'i'));
   if (single) {
     const d = toDate(stripOrdinals(single[1]));
     return { start: d, end: null };
   }
   return { start: null, end: null };
+}
+
+/**
+ * Pick the year for a date written without one.
+ *
+ * Briefs are forward-looking, so a month already well past is next year's
+ * campaign rather than a retrospective. Two months of slack covers a brief
+ * written just after the flight started.
+ */
+function inferYear(dateText, today) {
+  const year = today.getUTCFullYear();
+  const candidate = toDate(`${stripOrdinals(dateText)} ${year}`);
+  if (!candidate) return null;
+
+  const monthsBehind =
+    (today.getUTCFullYear() - Number(candidate.slice(0, 4))) * 12
+    + (today.getUTCMonth() + 1 - Number(candidate.slice(5, 7)));
+  return monthsBehind > 2 ? year + 1 : year;
 }
 
 function stripOrdinals(s) {

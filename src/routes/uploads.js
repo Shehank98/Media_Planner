@@ -5,13 +5,16 @@ import { log } from '../util/logger.js';
 import { asyncRoute } from '../util/asyncRoute.js';
 import { parseMicosWorkbook } from '../parsers/micosParser.js';
 import { parseMediaWatch } from '../parsers/mediaWatchParser.js';
+import { parseAdexWorkbook } from '../parsers/adexParser.js';
 import { persistMicos, persistMediaWatch, micosFacets } from '../services/micosRepo.js';
+import { upsertAdexRows, adexFacets } from '../services/adexRepo.js';
 import { pool } from '../db.js';
 
 export const router = express.Router();
 
 // ---------------------------------------------------------------------------
-// Session-only uploads: MICOS dashboard exports and media watch spot logs.
+// Session-only uploads: MICOS dashboard exports, media watch spot logs and
+// adex workbooks.
 //
 // memoryStorage is deliberate. multer's disk engine would write the workbook to
 // a temp path, and "delete it afterwards" is a promise that breaks on the first
@@ -30,12 +33,14 @@ const upload = multer({
 });
 
 /**
- * Upload MICOS exports and/or media watch logs, in any combination.
+ * Upload MICOS exports, media watch logs and adex workbooks, in any combination.
  *
  * Each file is classified by content rather than by field name or filename:
  * TV_ChannelDetails and TV_GrpDetails exports carry entirely different sheets
  * from each other despite the naming, and the media watch log arrives as either
- * a workbook or delimited text.
+ * a workbook or delimited text. Classification is ordered most to least
+ * specific, so a file is only treated as adex once the other two have declined
+ * it.
  */
 router.post('/tv', upload.any(), asyncRoute(async (req, res) => {
   const files = req.files || [];
@@ -46,6 +51,7 @@ router.post('/tv', upload.any(), asyncRoute(async (req, res) => {
   const perFile = [];
   const micosParsed = [];
   const mediaWatchSpots = [];
+  const adexRows = [];
   const warnings = [];
 
   try {
@@ -87,22 +93,44 @@ router.post('/tv', upload.any(), asyncRoute(async (req, res) => {
         detail.rows = { spots: mw.spots.length };
         detail.sheets = mw.sheets;
         detail.warnings.push(...mw.warnings);
-      } else {
-        detail.kind = 'unrecognised';
-        detail.sheets = micos.error ? [] : micos.sheets;
-        detail.warnings.push(
-          micos.error
-            ? `Could not read as a workbook: ${micos.error}`
-            : 'Neither a MICOS dashboard export nor a media watch log was recognised in this file.',
-          ...(mw.warnings || []),
-        );
+        perFile.push(detail);
+        continue;
       }
+
+      // Adex monthly spend. Normally this arrives by Drive sync, but the same
+      // workbooks get handed over directly often enough that refusing them
+      // here just sends people looking for an upload button that doesn't exist.
+      const adex = await parseAdexWorkbook(file.buffer, { sourceFile: file.originalname })
+        .catch((err) => ({ rows: [], sheets: [], warnings: [err.message] }));
+
+      if (adex.rows.length) {
+        adexRows.push(...adex.rows);
+        detail.kind = 'adex';
+        detail.rows = { adex: adex.rows.length };
+        detail.sheets = adex.sheets;
+        detail.warnings.push(...adex.warnings);
+        perFile.push(detail);
+        continue;
+      }
+
+      detail.kind = 'unrecognised';
+      detail.sheets = micos.error ? [] : micos.sheets;
+      detail.warnings.push(
+        micos.error
+          ? `Could not read as a workbook: ${micos.error}`
+          : 'This file did not match a MICOS dashboard export, a media watch spot log, or an '
+            + 'adex workbook. Check the header row names the columns the parser looks for.',
+        ...(mw.warnings || []),
+      );
       perFile.push(detail);
     }
 
-    if (!micosParsed.length && !mediaWatchSpots.length) {
+    if (!micosParsed.length && !mediaWatchSpots.length && !adexRows.length) {
       return res.status(422).json({
         error: 'No usable rows could be extracted from the upload.',
+        hint: 'Expected a MICOS dashboard export (TV_ChannelDetails / TV_GrpDetails), a media '
+          + 'watch spot log with a Channel and Cost column, or an adex workbook with a Month '
+          + 'column. The per-file detail below lists the sheets that were inspected.',
         files: perFile,
       });
     }
@@ -129,18 +157,22 @@ router.post('/tv', upload.any(), asyncRoute(async (req, res) => {
     const mwResult = mediaWatchSpots.length
       ? await persistMediaWatch(mediaWatchSpots)
       : { spots: 0 };
+    const adexUpserted = adexRows.length ? await upsertAdexRows(adexRows) : 0;
 
-    log.info('tv upload ingested', { files: files.length, ...persisted, mediaWatch: mwResult.spots });
+    log.info('upload ingested', {
+      files: files.length, ...persisted, mediaWatch: mwResult.spots, adex: adexUpserted,
+    });
 
     res.json({
       ok: true,
       files: perFile,
-      persisted: { ...persisted, media_watch_spots: mwResult.spots },
+      persisted: { ...persisted, media_watch_spots: mwResult.spots, adex_rows: adexUpserted },
       target_audience: audienceOverride,
       warnings,
       // Stated explicitly so the guarantee is visible to whoever calls the API.
       source_files_retained: false,
       facets: await micosFacets(pool),
+      adex: await adexFacets(),
     });
   } finally {
     // Drop the references so the buffers are collectable as soon as the

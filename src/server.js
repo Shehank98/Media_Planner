@@ -114,9 +114,22 @@ app.use((err, _req, res, _next) => {
     });
   }
 
+  // Provider failures carry their own status and remedy.
+  if (err.dependency === 'llm') {
+    return res.status(err.status || 502).json({
+      error: err.message,
+      hint: err.hint || null,
+      dependency: 'llm',
+      provider: err.provider || config.llm.provider,
+    });
+  }
+
   const status = err.status || 500;
   if (status >= 500) log.error('unhandled request error', { err });
-  res.status(status).json({ error: err.message || 'Internal server error' });
+  res.status(status).json({
+    error: err.message || 'Internal server error',
+    hint: err.hint || null,
+  });
 });
 
 // --- boot ------------------------------------------------------------------
