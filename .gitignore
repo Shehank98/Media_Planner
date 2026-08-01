@@ -1,0 +1,17 @@
+node_modules/
+.env
+.env.local
+*.log
+
+# Report output + chart scratch. Generated per request, never source of truth.
+tmp/
+out/
+
+# Python venv for the report worker
+.venv/
+__pycache__/
+*.pyc
+
+# Sample spreadsheets / briefs are client data - keep them local, never commit.
+samples/*
+!samples/README.md

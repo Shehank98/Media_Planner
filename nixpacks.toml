@@ -1,0 +1,23 @@
+# Railway builds with Nixpacks, which detects Node from package.json but would
+# not otherwise install Python - and the PDF worker needs matplotlib and
+# reportlab at runtime, not just at build time.
+
+[phases.setup]
+nixPkgs = ["nodejs_22", "python311", "python311Packages.pip"]
+
+[phases.install]
+cmds = [
+  "npm ci",
+  "python3 -m venv /opt/venv",
+  "/opt/venv/bin/pip install --no-cache-dir -r report/requirements.txt",
+]
+
+[start]
+cmd = "npm start"
+
+[variables]
+# Point the report worker at the venv interpreter rather than the bare system
+# python, which has neither dependency installed.
+PYTHON_BIN = "/opt/venv/bin/python3"
+# matplotlib needs a writable font cache directory.
+MPLCONFIGDIR = "/tmp/matplotlib"
