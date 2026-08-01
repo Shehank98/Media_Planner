@@ -207,94 +207,227 @@ def section_executive_summary(story, styles, plan):
 
 
 def section_lineup(story, styles, plan, budget):
-    """3. Recommended lineup - channel, programme, day, day-part, duration, cost."""
-    story.append(Paragraph("Recommended lineup", styles["h1"]))
-    lineup = plan.get("recommended_lineup") or []
-    if not lineup:
+    """3. Recommended plan - channels first, programmes beneath each."""
+    story.append(Paragraph("Recommended plan", styles["h1"]))
+    channels = plan.get("channel_plan") or []
+    if not channels:
         story.append(Paragraph(
-            "The model did not return a programme lineup. See the caveats section.",
+            "The model did not return a channel plan. See the caveats section.",
             styles["body"],
         ))
         return
 
-    header = ["Channel", "Programme", "Day", "Day part", "Dur", "Spots", "Rating", "Est. cost", "Why this slot"]
-    data = [[Paragraph(f"<b>{esc(h)}</b>", styles["cell_head"]) for h in header]]
-    flagged = []
-    cost_flagged = []
+    flagged_note = False
+    rate_note = False
 
-    for idx, item in enumerate(lineup):
-        programme = item.get("programme") or "-"
-        # groundLineup() marks entries it could not match to the supplied
-        # ratings, and costs with no observed rate behind them. A planner must
-        # see both in the printed plan, not only in the API response.
-        if item.get("in_source_data") is False:
-            programme = f"{programme} †"
-            flagged.append(idx)
+    for channel in channels:
+        name = channel.get("channel") or "-"
+        share = channel.get("share_of_audience")
+        heading = f"{name}" + (f"  ·  {fmt_num(share, 2)}% share of audience" if share else "")
+        block = [Paragraph(esc(heading), styles["h2"])]
+        if channel.get("why_this_channel"):
+            block.append(Paragraph(esc(channel["why_this_channel"]), styles["small"]))
+            block.append(Spacer(1, 2 * mm))
 
-        cost = item.get("est_cost_lkr")
-        cost_text = "-" if cost is None else f"{float(cost):,.0f}"
-        if item.get("cost_supported") is False:
-            cost_text = f"{cost_text} ‡"
-            cost_flagged.append(idx)
+        header = ["Programme", "Day", "Time band", "Dur", "Spots", "TVR", "Rate", "Why this slot"]
+        data = [[Paragraph(f"<b>{esc(h)}</b>", styles["cell_head"]) for h in header]]
+        flagged_rows = []
+        rate_rows = []
 
-        duration = item.get("spot_duration_secs")
-        data.append([
-            Paragraph(esc(item.get("channel") or "-"), styles["cell"]),
-            Paragraph(esc(programme), styles["cell"]),
-            Paragraph(esc(item.get("day") or "-"), styles["cell"]),
-            Paragraph(esc(item.get("day_part") or "-"), styles["cell"]),
-            Paragraph("-" if duration is None else f"{int(duration)}s", styles["cell"]),
-            Paragraph("-" if item.get("spots") is None else str(item.get("spots")), styles["cell"]),
-            Paragraph(fmt_num(item.get("rating")), styles["cell"]),
-            Paragraph(cost_text, styles["cell"]),
-            Paragraph(esc(item.get("rationale") or ""), styles["cell"]),
-        ])
+        for idx, p in enumerate(channel.get("programmes") or []):
+            programme = p.get("programme") or "-"
+            # groundLineup() marks entries it could not match against the
+            # supplied data, and rates with no observation behind them. Both
+            # must be visible in the printed plan, not only in the API response.
+            if p.get("in_source_data") is False:
+                programme = f"{programme} \u2020"
+                flagged_rows.append(idx)
+                flagged_note = True
 
-    table = Table(
-        data,
-        colWidths=[22 * mm, 30 * mm, 16 * mm, 20 * mm, 10 * mm, 11 * mm, 13 * mm, 20 * mm,
-                   CONTENT_WIDTH - 142 * mm],
-        repeatRows=1,
-    )
-    style = [
-        ("BACKGROUND", (0, 0), (-1, 0), INK),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING", (0, 0), (-1, -1), 4),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-        ("GRID", (0, 0), (-1, -1), 0.4, RULE),
-        ("ALIGN", (4, 1), (7, -1), "RIGHT"),
-    ]
-    for r in range(1, len(data)):
-        if r % 2 == 0:
-            style.append(("BACKGROUND", (0, r), (-1, r), BAND))
-    for idx in flagged:
-        style.append(("TEXTCOLOR", (1, idx + 1), (1, idx + 1), ACCENT))
-    for idx in cost_flagged:
-        style.append(("TEXTCOLOR", (7, idx + 1), (7, idx + 1), ACCENT))
-    table.setStyle(TableStyle(style))
-    story.append(table)
+            rate = p.get("rate_lkr")
+            rate_text = "-" if rate is None else f"{float(rate):,.0f}"
+            if p.get("rate_supported") is False:
+                rate_text = f"{rate_text} \u2021"
+                rate_rows.append(idx)
+                rate_note = True
+
+            duration = p.get("duration_secs")
+            data.append([
+                Paragraph(esc(programme), styles["cell"]),
+                Paragraph(esc(p.get("day_pattern") or "-"), styles["cell"]),
+                Paragraph(esc(p.get("time_band") or "-"), styles["cell"]),
+                Paragraph("-" if duration is None else f"{int(duration)}s", styles["cell"]),
+                Paragraph("-" if p.get("spots") is None else str(p.get("spots")), styles["cell"]),
+                Paragraph(fmt_num(p.get("tvr"), 2), styles["cell"]),
+                Paragraph(rate_text, styles["cell"]),
+                Paragraph(esc(p.get("rationale") or ""), styles["cell"]),
+            ])
+
+        table = Table(
+            data,
+            colWidths=[32 * mm, 20 * mm, 30 * mm, 10 * mm, 12 * mm, 13 * mm, 18 * mm,
+                       CONTENT_WIDTH - 135 * mm],
+            repeatRows=1,
+        )
+        style = [
+            ("BACKGROUND", (0, 0), (-1, 0), INK),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("GRID", (0, 0), (-1, -1), 0.4, RULE),
+            ("ALIGN", (3, 1), (6, -1), "RIGHT"),
+        ]
+        for r in range(1, len(data)):
+            if r % 2 == 0:
+                style.append(("BACKGROUND", (0, r), (-1, r), BAND))
+        for idx in flagged_rows:
+            style.append(("TEXTCOLOR", (0, idx + 1), (0, idx + 1), ACCENT))
+        for idx in rate_rows:
+            style.append(("TEXTCOLOR", (6, idx + 1), (6, idx + 1), ACCENT))
+        table.setStyle(TableStyle(style))
+        block.append(table)
+
+        story.append(KeepTogether(block))
+        story.append(Spacer(1, 5 * mm))
 
     if budget:
-        story.append(Spacer(1, 3 * mm))
         story.append(budget_summary_table(styles, budget, plan))
 
     notes = []
-    if flagged:
-        notes.append(
-            "† This entry could not be matched against the supplied rating data. "
-            "Verify it before the plan goes to the client."
-        )
-    if cost_flagged:
-        notes.append(
-            "‡ This cost has no observed spot rate behind it in the media watch data."
-        )
+    if flagged_note:
+        notes.append("\u2020 This entry could not be matched against the supplied rating data. "
+                     "Verify it before the plan goes to the client.")
+    if rate_note:
+        notes.append("\u2021 This rate has no observed spot cost behind it in the media watch data.")
     if notes:
         story.append(Spacer(1, 3 * mm))
         for note in notes:
             story.append(Paragraph(note, styles["small"]))
     story.append(Spacer(1, 4 * mm))
+
+
+def section_schedule(story, styles, schedule):
+    """4. The dated schedule - channel, programme, day, duration, spots per date."""
+    lines = schedule.get("lines") or []
+    if not lines:
+        return
+    dates = schedule.get("dates") or []
+
+    story.append(PageBreak())
+    story.append(Paragraph("Schedule", styles["h1"]))
+    story.append(Paragraph(
+        "Spots placed across the campaign. The grid shows how many run on each date.",
+        styles["small"],
+    ))
+    story.append(Spacer(1, 3 * mm))
+
+    # A long flight has more dates than fit across a page, so the grid is split
+    # into chunks that stay legible rather than being shrunk to nothing.
+    per_page = 14
+    chunks = [dates[i:i + per_page] for i in range(0, len(dates), per_page)] or [[]]
+
+    for chunk_no, chunk in enumerate(chunks):
+        if chunk_no:
+            story.append(PageBreak())
+            story.append(Paragraph(
+                f"Schedule (continued, {chunk[0]} onwards)", styles["h2"]))
+            story.append(Spacer(1, 2 * mm))
+
+        header = ["Channel", "Programme", "Day", "Dur", "Spots"] + [d[5:] for d in chunk]
+        data = [[Paragraph(f"<b>{esc(h)}</b>", styles["cell_head"]) for h in header]]
+
+        for line in lines:
+            grid = line.get("spot_dates") or {}
+            duration = line.get("duration_secs")
+            row = [
+                Paragraph(esc(line.get("channel_name") or "-"), styles["cell"]),
+                Paragraph(esc(line.get("programme_name") or "-"), styles["cell"]),
+                Paragraph(esc(line.get("day_pattern") or "-"), styles["cell"]),
+                Paragraph("-" if duration is None else f"{int(duration)}s", styles["cell"]),
+                Paragraph(str(line.get("spots") or 0), styles["cell"]),
+            ]
+            for d in chunk:
+                n = grid.get(d)
+                row.append(Paragraph(str(n) if n else "", styles["cell"]))
+            data.append(row)
+
+        fixed = 24 * mm + 34 * mm + 20 * mm + 10 * mm + 12 * mm
+        date_width = max(6 * mm, (CONTENT_WIDTH - fixed) / max(1, len(chunk)))
+        table = Table(
+            data,
+            colWidths=[24 * mm, 34 * mm, 20 * mm, 10 * mm, 12 * mm] + [date_width] * len(chunk),
+            repeatRows=1,
+        )
+        style = [
+            ("BACKGROUND", (0, 0), (-1, 0), INK),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+            ("GRID", (0, 0), (-1, -1), 0.4, RULE),
+            ("ALIGN", (3, 1), (-1, -1), "CENTER"),
+            ("FONTSIZE", (0, 0), (-1, -1), 7),
+        ]
+        for r in range(1, len(data)):
+            if r % 2 == 0:
+                style.append(("BACKGROUND", (0, r), (-1, r), BAND))
+        table.setStyle(TableStyle(style))
+        story.append(table)
+
+    totals = schedule.get("totals") or {}
+    if totals.get("channels"):
+        story.append(Spacer(1, 6 * mm))
+        story.append(Paragraph("Channel totals", styles["h2"]))
+        rows = [
+            [c.get("channel_name"), str(c.get("lines") or 0), str(c.get("spots") or 0),
+             fmt_num(c.get("cost_lkr"), 0)]
+            for c in totals["channels"]
+        ]
+        rows.append(["TOTAL", "", str(totals.get("total_spots") or 0),
+                     fmt_num(totals.get("total_cost_lkr"), 0)])
+        story.append(simple_table(
+            styles, ["Channel", "Lines", "Spots", "Cost (LKR)"], rows,
+            [50 * mm, 22 * mm, 22 * mm, CONTENT_WIDTH - 94 * mm],
+            numeric_from=1,
+        ))
+
+
+def section_clutter(story, styles, plan, clutter):
+    """Where the buy sits across time belts, and whether that is defensible."""
+    if not clutter and not plan.get("clutter_strategy"):
+        return
+    story.append(Spacer(1, 6 * mm))
+    story.append(Paragraph("Clutter &amp; spread", styles["h1"]))
+
+    if plan.get("clutter_strategy"):
+        story.append(Paragraph(esc(plan["clutter_strategy"]), styles["body"]))
+
+    by_belt = (clutter or {}).get("by_belt") or []
+    if by_belt:
+        rows = [[b.get("time_belt"), str(b.get("spots") or 0), f"{fmt_num(b.get('share_pct'), 1)}%"]
+                for b in by_belt]
+        story.append(simple_table(
+            styles, ["Time belt", "Spots", "Share of plan"], rows,
+            [70 * mm, 25 * mm, CONTENT_WIDTH - 95 * mm],
+            numeric_from=1,
+        ))
+
+    issues = (clutter or {}).get("issues") or []
+    if issues:
+        story.append(Spacer(1, 3 * mm))
+        story.append(Paragraph(
+            "The automated check flagged the following concentrations:", styles["small"]))
+        for issue in issues:
+            story.append(Paragraph(f"\u2022 {esc(issue.get('detail'))}", styles["body"]))
+    elif clutter:
+        story.append(Spacer(1, 2 * mm))
+        story.append(Paragraph(
+            "The automated check found no over-concentration in any single belt.",
+            styles["small"],
+        ))
 
 
 def budget_summary_table(styles, budget, plan):
@@ -344,8 +477,9 @@ def section_charts(story, styles, chart_paths):
          "Average ratings for the audience panel. Highlighted bars are in the recommended lineup."),
         ("day_of_week", "Audience by day of week",
          "Ratings by day for the channels in the plan. Shaded days are the ones the plan buys."),
-        ("medium_split", "Medium split",
-         "The brief's stated budget split against the category's actual medium mix from adex."),
+        ("time_belts", "Time-belt spread",
+         "Where this plan's spots sit against where competitors already are. A plan stacked into "
+         "one belt repeats the same audience instead of building reach."),
     ]
 
     for idx, (key, heading, caption) in enumerate(captions):
@@ -608,6 +742,8 @@ def build_report(payload, out_path, charts_dir):
     aggregated = payload.get("aggregated") or {}
     meta = payload.get("meta") or {}
     budget = payload.get("budget") or {}
+    schedule = payload.get("schedule") or {}
+    clutter = payload.get("clutter") or {}
 
     chart_paths = render_all(chart_data, charts_dir)
     styles = build_styles()
@@ -628,6 +764,8 @@ def build_report(payload, out_path, charts_dir):
     section_cover(story, styles, brief, plan, meta)
     section_executive_summary(story, styles, plan)
     section_lineup(story, styles, plan, budget)
+    section_schedule(story, styles, schedule)
+    section_clutter(story, styles, plan, clutter)
     section_charts(story, styles, chart_paths)
     section_competitor_analysis(story, styles, plan)
     section_caveats(story, styles, plan, aggregated.get("data_notes") or [])

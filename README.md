@@ -115,7 +115,8 @@ separates "this is a scan, it needs OCR" from "my brief uses different labels".
 
 ## The flow
 
-Open the app at `/` and work down the page, or drive the same JSON API directly.
+Three tabs: **Plan**, **Data**, **Settings**. Work down the Plan tab, or drive
+the same JSON API directly.
 
 1. **Upload the brief** — `POST /api/briefs/parse` returns the fields it found,
    which label each one matched, and warnings. **It saves nothing.** Brief PDFs
@@ -126,10 +127,15 @@ Open the app at `/` and work down the page, or drive the same JSON API directly.
    day and day-part (already ranked), observed spot rates joined on by channel
    and programme, and who else is buying those programmes.
 4. **Model** — the aggregate plus the brief go to `analyzeAndRecommend()`, which
-   returns the fixed JSON shape.
-5. **Store and chart** — the recommendation, the chart series and the aggregates
-   it was built from all land on `plan_recommendations`.
-6. **Report** — `GET /api/plans/:id/report.pdf` renders the seven-section PDF.
+   returns a channel-first plan: channels chosen for the audience, programmes
+   beneath each, with a day pattern, time band, commercial length and spot count.
+5. **Schedule** — the spots are placed on real campaign dates in code, not by
+   the model, and the buy is checked for time-belt concentration.
+6. **Store and chart** — the recommendation, the schedule, the chart series and
+   the aggregates it was built from land on `plan_recommendations` and
+   `plan_schedule`.
+7. **Report** — `GET /api/plans/:id/report.pdf` renders the PDF and purges the
+   Drive archive for that run.
 
 Filtering afterwards (`/api/plans/brief/:id/filter`) re-runs the SQL only. The
 model is called once per brief, so filter clicks are free and the rationale a
@@ -151,7 +157,13 @@ client has already seen doesn't shift under them.
 | `GET` | `/api/plans/preview/:briefId` | Exactly what the model would receive. No model call. |
 | `POST` | `/api/plans/generate/:briefId` | The one endpoint that costs a model call. |
 | `GET` | `/api/plans/brief/:briefId/filter` | Re-aggregate under filters. No model call. |
-| `GET` | `/api/plans/:id/report.pdf` | The PDF report. |
+| `GET` | `/api/plans/:id/schedule` | The dated spot grid. |
+| `GET` | `/api/plans/:id/report.pdf` | The PDF report; purges the Drive archive. |
+| `GET` | `/api/settings` | Drive configuration. Secrets report presence only. |
+| `PUT` | `/api/settings/drive` | Set the folder link and service-account key. |
+| `POST` | `/api/settings/drive/test` | Prove the credentials reach the folder. |
+| `GET` | `/api/uploads/datasets` | The upload slots the UI renders. |
+| `POST` | `/api/uploads/archive/purge` | Remove archived sources; adex is kept. |
 
 ## Parsing
 
@@ -175,6 +187,21 @@ The parsers have been run against the real `TV_ChannelDetails_*`,
 `TV_GrpDetails_*` and adex files: 586 programmes, 336 day/day-part rows and
 2,992 competitor spots load cleanly, keyed to the `Meera 16-45` panel over the
 June 2026 survey window.
+
+## What the model is and is not asked to do
+
+The model picks channels and programmes and writes the reasoning. Three things
+are deliberately kept away from it, because they are arithmetic and a wrong
+answer is invisible:
+
+- **Placing spots on dates.** A model asked to emit sixty date columns drops
+  days, double-counts, and puts spots outside the flight. `schedule.js` expands
+  "MON - FRI, 8 spots" across the campaign calendar, spreading them evenly.
+- **Adding up the money.** A plan committing 140% of budget reads exactly like
+  one that fits until someone totals it.
+- **Measuring clutter.** The prompt asks for a spread buy; `clutter.js` measures
+  what the plan actually does per time belt and flags breaches. Agreement in the
+  rationale is not evidence of it in the numbers.
 
 ## Three places the numbers could go quietly wrong
 

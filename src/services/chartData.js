@@ -7,13 +7,43 @@
 // the PDF are exactly the numbers that were audited into Postgres.
 // ---------------------------------------------------------------------------
 
-const MEDIUM_LABELS = { tv: 'TV', radio: 'Radio', press: 'Press', digital: 'Digital', outdoor: 'Outdoor' };
+
+const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+/** One row per programme, from either the channel-first plan or a flat lineup. */
+function plannedProgrammes(recommendation) {
+  if (Array.isArray(recommendation?.lineup)) return recommendation.lineup;
+  if (Array.isArray(recommendation?.channel_plan)) {
+    return recommendation.channel_plan.flatMap((c) =>
+      (c.programmes || []).map((p) => ({ channel: c.channel, ...p })));
+  }
+  if (Array.isArray(recommendation?.recommended_lineup)) {
+    // Stored plans hold the channel-first structure under this column.
+    return recommendation.recommended_lineup.flatMap((c) =>
+      c?.programmes
+        ? c.programmes.map((p) => ({ channel: c.channel, ...p }))
+        : [c]);
+  }
+  return [];
+}
+
+/** Weekday names a day pattern covers, lowercased for comparison. */
+function expandDayPattern(pattern) {
+  const text = String(pattern || '').toLowerCase();
+  if (!text) return [];
+  if (/week\s*day|mon\s*[-–to]+\s*fri/.test(text)) return WEEKDAYS.slice(1, 6);
+  if (/week\s*end|sat\s*[-–to]+\s*sun/.test(text)) return ['saturday', 'sunday'];
+  return WEEKDAYS.filter((d) => text.includes(d.slice(0, 3)));
+}
 
 export function buildChartData(aggregated, recommendation, brief) {
   return {
     competitor_spend: competitorSpendSeries(aggregated),
     programme_ratings: programmeRatingSeries(aggregated, recommendation),
-    medium_split: mediumSplitSeries(aggregated, brief),
+    // Where the buy sits across time belts, against where competitors already
+    // are. This replaced the medium-split donut when the brief stopped
+    // carrying TV/radio/press percentages.
+    time_belts: timeBeltSeries(aggregated, recommendation),
     // Which days the audience is actually available - the evidence behind the
     // "day" column in the lineup.
     day_of_week: dayOfWeekSeries(aggregated, recommendation),
@@ -31,16 +61,14 @@ function dayOfWeekSeries(aggregated, recommendation) {
   const rows = aggregated.best_days || [];
   const ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-  const planned = new Set(
-    (recommendation?.recommended_lineup || [])
-      .map((i) => (i.channel || '').toLowerCase())
-      .filter(Boolean),
-  );
-  const plannedDays = new Set(
-    (recommendation?.recommended_lineup || [])
-      .map((i) => (i.day || '').toLowerCase())
-      .filter(Boolean),
-  );
+  const programmes = plannedProgrammes(recommendation);
+  const planned = new Set(programmes.map((i) => (i.channel || '').toLowerCase()).filter(Boolean));
+  // Day patterns are ranges ("MON - FRI"), so expand them to actual weekdays
+  // before deciding which columns to shade.
+  const plannedDays = new Set();
+  for (const item of programmes) {
+    for (const day of expandDayPattern(item.day_pattern || item.day)) plannedDays.add(day);
+  }
 
   const byChannel = new Map();
   for (const row of rows) {
@@ -137,7 +165,7 @@ function competitorSpendSeries(aggregated) {
 function programmeRatingSeries(aggregated, recommendation) {
   const rows = (aggregated.programme_ratings || []).slice(0, 20);
   const recommended = new Set(
-    (recommendation?.recommended_lineup || [])
+    plannedProgrammes(recommendation)
       .map((i) => `${(i.channel || '').toLowerCase()}|${(i.programme || '').toLowerCase()}`),
   );
 
@@ -170,55 +198,50 @@ function programmeRatingSeries(aggregated, recommendation) {
 }
 
 /**
- * Donut comparison of medium allocation.
+ * Where the plan's spots sit across time belts, against competitor activity.
  *
- * The brief's own split is one ring. The second ring is the category's actual
- * TV/radio/press mix from adex over the analysis window - what the competitive
- * set really does. The Section 7 JSON shape carries no medium-split field, so
- * this benchmark is the honest data-backed comparator rather than a number
- * invented on the model's behalf; a planner reads the two rings together to see
- * whether the brief's split is in line with the category.
+ * The point a planner needs to see at a glance is whether the buy is stacked
+ * into prime time - which is both the most expensive inventory and the most
+ * contested - or spread across the day.
  */
-function mediumSplitSeries(aggregated, brief) {
-  const briefSplit = normaliseSplit(brief?.medium_split);
+function timeBeltSeries(aggregated, recommendation) {
+  const observed = aggregated.time_belt_clutter || [];
+  const planned = recommendation?.clutter?.by_belt || [];
 
-  const totals = { tv: 0, radio: 0, press: 0 };
-  for (const row of aggregated.competitor_spend_by_quarter || []) {
-    totals.tv += Number(row.tv_spend_000) || 0;
-    totals.radio += Number(row.radio_spend_000) || 0;
-    totals.press += Number(row.press_spend_000) || 0;
+  // Keep the observed order (busiest first) and append any belt the plan uses
+  // that competitors do not.
+  const labels = [...observed.map((o) => o.time_belt)];
+  for (const p of planned) {
+    if (p.time_belt && !labels.includes(p.time_belt)) labels.push(p.time_belt);
   }
-  const grandTotal = totals.tv + totals.radio + totals.press;
-  const benchmark = grandTotal > 0
-    ? Object.entries(totals)
-        .filter(([, v]) => v > 0)
-        .map(([k, v]) => ({ label: MEDIUM_LABELS[k] || k, value: +((v / grandTotal) * 100).toFixed(1) }))
-    : [];
+  if (!labels.length) {
+    return { title: 'Time-belt spread', categories: [], series: [], available: false };
+  }
+
+  const plannedByBelt = new Map(planned.map((p) => [p.time_belt, p.share_pct]));
+  const observedByBelt = new Map(
+    observed.map((o) => [o.time_belt, o.share_of_competitor_spots_pct]),
+  );
 
   return {
-    title: 'Medium split: brief vs category benchmark',
-    brief: {
-      label: 'Brief budget split',
-      slices: briefSplit,
-      available: briefSplit.length > 0,
-    },
-    benchmark: {
-      label: 'Category actual (adex)',
-      slices: benchmark,
-      available: benchmark.length > 0,
-      note: benchmark.length
-        ? 'Share of category TV/radio/press spend over the analysis window.'
-        : 'No category spend available to benchmark against.',
-    },
-    budget_lkr_lakhs: brief?.budget_lkr_lakhs ?? null,
+    title: 'Time-belt spread: this plan vs competitor activity',
+    subtitle: 'Share of spots in each belt. A plan concentrated in one belt repeats the same audience.',
+    y_label: 'Share of spots (%)',
+    categories: labels,
+    available: true,
+    series: [
+      {
+        label: 'This plan',
+        values: labels.map((l) => plannedByBelt.get(l) ?? 0),
+        is_plan: true,
+      },
+      {
+        label: 'Competitor spots',
+        values: labels.map((l) => observedByBelt.get(l) ?? 0),
+        is_plan: false,
+      },
+    ],
   };
-}
-
-function normaliseSplit(split) {
-  if (!split || typeof split !== 'object') return [];
-  return Object.entries(split)
-    .filter(([k, v]) => !k.startsWith('_') && Number.isFinite(Number(v)) && Number(v) > 0)
-    .map(([k, v]) => ({ label: MEDIUM_LABELS[k.toLowerCase()] || k, value: Number(v) }));
 }
 
 function scopeSubtitle(scope) {

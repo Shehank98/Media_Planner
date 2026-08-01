@@ -1,4 +1,5 @@
 import { pool } from '../db.js';
+import { observedClutter } from './clutter.js';
 
 // ---------------------------------------------------------------------------
 // Aggregations over the MICOS datasets and the media watch cost log.
@@ -46,13 +47,16 @@ export async function buildTvAggregates(brief, filters = {}, limit = DEFAULT_PRO
   const resolved = await resolveAudience(requested);
   const audience = resolved.audience;
 
-  const [programmes, channels, days, dayparts, rates, pressure] = await Promise.all([
+  const [programmes, channels, days, dayparts, rates, pressure, clutter] = await Promise.all([
     topProgrammes(audience, filters, limit),
     channelPerformance(audience),
     bestDays(audience),
     bestDayparts(audience),
     programmeRates(filters),
     competitorSpotPressure(brief, audience),
+    // How contested each time belt already is, so the plan can avoid piling
+    // into the belts everyone else is already buying.
+    observedClutter(audience),
   ]);
 
   const notes = [];
@@ -91,6 +95,7 @@ export async function buildTvAggregates(brief, filters = {}, limit = DEFAULT_PRO
     best_dayparts: dayparts,
     programme_rates: rates,
     competitor_spot_pressure: pressure,
+    time_belt_clutter: clutter,
     data_notes: notes,
   };
 }

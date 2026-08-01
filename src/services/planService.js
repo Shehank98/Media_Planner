@@ -50,7 +50,7 @@ export async function generatePlan(briefId, opts = {}) {
      RETURNING *`,
     [
       briefId,
-      JSON.stringify(recommendation.recommended_lineup),
+      JSON.stringify(recommendation.channel_plan),
       recommendation.overall_rationale,
       recommendation.competitor_analysis,
       // The aggregates travel with the charts so the PDF appendix and any later
@@ -61,6 +61,9 @@ export async function generatePlan(briefId, opts = {}) {
         meta: recommendation.meta,
         budget: recommendation.budget,
         budget_fit: recommendation.budget_fit,
+        clutter_strategy: recommendation.clutter_strategy,
+        clutter: recommendation.clutter,
+        schedule_totals: recommendation.schedule_totals,
         grounding: recommendation.grounding,
       }),
       recommendation.confidence,
@@ -69,10 +72,16 @@ export async function generatePlan(briefId, opts = {}) {
     ],
   );
 
+  // The schedule is derived, so it lives in its own table and is rewritten
+  // whenever the plan is regenerated.
+  await saveSchedule(rows[0].id, recommendation.schedule);
+
   log.info('plan generated', {
     briefId,
     planId: rows[0].id,
     model: recommendation.meta.model_used,
+    channels: recommendation.channel_plan.length,
+    schedule_lines: recommendation.schedule.length,
     total_ms: Date.now() - started,
     llm_ms: recommendation.meta.elapsed_ms,
   });
@@ -90,9 +99,54 @@ function briefForModel(brief) {
     language: brief.language,
     territory: brief.territory,
     campaign_period: { start: brief.period_start, end: brief.period_end },
+    campaign_days: campaignDays(brief),
     budget_lkr_lakhs: brief.budget_lkr_lakhs,
-    medium_split: brief.medium_split,
+    // The commercial lengths the plan may buy. The model must not invent others.
+    commercial_durations_secs: brief.commercial_durations || [],
   };
+}
+
+/** Length of the flight, so the model can size the number of spots sensibly. */
+function campaignDays(brief) {
+  if (!brief.period_start || !brief.period_end) return null;
+  const from = new Date(`${brief.period_start}T00:00:00Z`);
+  const to = new Date(`${brief.period_end}T00:00:00Z`);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return null;
+  return Math.max(1, Math.round((to - from) / 86_400_000) + 1);
+}
+
+/** Replace the stored schedule for a plan. */
+async function saveSchedule(planId, lines) {
+  await pool.query('DELETE FROM plan_schedule WHERE plan_id = $1', [planId]);
+  if (!lines?.length) return;
+
+  const columns = ['plan_id', 'channel_name', 'programme_name', 'day_pattern', 'time_band',
+    'time_start', 'time_end', 'duration_secs', 'spots', 'tvr', 'rate_lkr', 'cost_lkr',
+    'spot_dates', 'line_order'];
+  const values = [];
+  const tuples = [];
+  lines.forEach((line, idx) => {
+    const base = idx * columns.length;
+    tuples.push(`(${columns.map((_, c) => `$${base + c + 1}`).join(',')})`);
+    values.push(
+      planId, line.channel_name, line.programme_name, line.day_pattern, line.time_band,
+      line.time_start, line.time_end, line.duration_secs, line.spots, line.tvr,
+      line.rate_lkr, line.cost_lkr, JSON.stringify(line.spot_dates || {}), line.line_order ?? idx,
+    );
+  });
+  await pool.query(
+    `INSERT INTO plan_schedule (${columns.join(',')}) VALUES ${tuples.join(',')}`,
+    values,
+  );
+}
+
+/** The stored schedule for a plan, in display order. */
+export async function getSchedule(planId) {
+  const { rows } = await pool.query(
+    'SELECT * FROM plan_schedule WHERE plan_id = $1 ORDER BY line_order',
+    [planId],
+  );
+  return rows;
 }
 
 export async function getPlan(planId) {

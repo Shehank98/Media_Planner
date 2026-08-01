@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import express from 'express';
 import multer from 'multer';
 import { config } from '../config.js';
@@ -8,39 +9,111 @@ import { parseMediaWatch } from '../parsers/mediaWatchParser.js';
 import { parseAdexWorkbook } from '../parsers/adexParser.js';
 import { persistMicos, persistMediaWatch, micosFacets } from '../services/micosRepo.js';
 import { upsertAdexRows, adexFacets } from '../services/adexRepo.js';
+import { archiveUpload, purgeArchive, archiveStatus } from '../services/driveArchive.js';
 import { pool } from '../db.js';
 
 export const router = express.Router();
 
 // ---------------------------------------------------------------------------
-// Session-only uploads: MICOS dashboard exports, media watch spot logs and
-// adex workbooks.
+// Session-only uploads.
 //
 // memoryStorage is deliberate. multer's disk engine would write the workbook to
 // a temp path, and "delete it afterwards" is a promise that breaks on the first
 // crash or early return. Holding the file as a Buffer means there is no file to
-// forget to delete - it is parsed, the numbers go to Postgres, and the Buffer
-// is dropped when the request ends.
+// forget to delete - it is parsed, the numbers go to Postgres, the buffer is
+// archived to Drive if configured, and then dropped.
+//
+// Files arrive in named slots (channel_summary, top_programmes, …) so a planner
+// can see which dataset is missing. The slot is a label, not a parser
+// selection: content still decides how a file is read, because the MICOS
+// exports carry different sheets under identical names and mislabelling one
+// should not silently load the wrong table.
 // ---------------------------------------------------------------------------
+
+export const DATASETS = {
+  channel_summary: 'Channel summary (share of audience, reach)',
+  top_programmes: 'Top programmes (ratings, airings, duration)',
+  top_spend: 'Top spend (competitor spend by brand)',
+  category_analysis: 'Category analysis',
+  media_watch: 'Media watch spot log (with cost)',
+  adex: 'Adex monthly spend',
+};
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: config.maxUploadBytes, files: 10 },
+  limits: { fileSize: config.maxUploadBytes, files: 24 },
   fileFilter: (_req, file, cb) => {
     const ok = /\.(xlsx|xlsm|xls|csv|tsv|txt)$/i.test(file.originalname);
     cb(ok ? null : new Error(`${file.originalname}: expected .xlsx/.xls or .csv/.tsv`), ok);
   },
 });
 
+/** Classify one file by content, reporting what it turned out to be. */
+async function classify(file) {
+  const micos = await parseMicosWorkbook(file.buffer, { sourceFile: file.originalname })
+    .catch((err) => ({ error: err.message }));
+
+  const micosRows = micos.error
+    ? 0
+    : micos.programmes.length + micos.channelPerformance.length
+      + micos.channelDays.length + micos.channelDayparts.length + micos.spots.length;
+
+  if (micosRows > 0) {
+    return {
+      kind: 'micos_dashboard',
+      micos,
+      rows: {
+        programmes: micos.programmes.length,
+        channel_performance: micos.channelPerformance.length,
+        days: micos.channelDays.length,
+        dayparts: micos.channelDayparts.length,
+        spots: micos.spots.length,
+      },
+      sheets: micos.sheets,
+      warnings: micos.warnings,
+      target_audience: micos.meta.target_audience,
+      period: { from: micos.meta.period_start, to: micos.meta.period_end },
+    };
+  }
+
+  const mw = await parseMediaWatch(file.buffer, { sourceFile: file.originalname })
+    .catch((err) => ({ spots: [], sheets: [], warnings: [err.message] }));
+  if (mw.spots.length) {
+    return {
+      kind: 'media_watch', spots: mw.spots, rows: { spots: mw.spots.length },
+      sheets: mw.sheets, warnings: mw.warnings,
+    };
+  }
+
+  const adex = await parseAdexWorkbook(file.buffer, { sourceFile: file.originalname })
+    .catch((err) => ({ rows: [], sheets: [], warnings: [err.message] }));
+  if (adex.rows.length) {
+    return {
+      kind: 'adex', adexRows: adex.rows, rows: { adex: adex.rows.length },
+      sheets: adex.sheets, warnings: adex.warnings,
+    };
+  }
+
+  return {
+    kind: 'unrecognised',
+    rows: {},
+    sheets: micos.error ? [] : micos.sheets,
+    warnings: [
+      micos.error
+        ? `Could not read as a workbook: ${micos.error}`
+        : 'This file did not match a MICOS dashboard export, a media watch spot log, or an '
+          + 'adex workbook. Check the header row names the columns the parser looks for.',
+      ...(mw.warnings || []),
+    ],
+  };
+}
+
 /**
- * Upload MICOS exports, media watch logs and adex workbooks, in any combination.
+ * Upload one or more datasets.
  *
- * Each file is classified by content rather than by field name or filename:
- * TV_ChannelDetails and TV_GrpDetails exports carry entirely different sheets
- * from each other despite the naming, and the media watch log arrives as either
- * a workbook or delimited text. Classification is ordered most to least
- * specific, so a file is only treated as adex once the other two have declined
- * it.
+ * Field names carry the slot: `channel_summary`, `media_watch`, `adex`, and so
+ * on. Anything under `files` is accepted too and classified purely by content,
+ * which keeps the single-dropzone flow working.
  */
 router.post('/tv', upload.any(), asyncRoute(async (req, res) => {
   const files = req.files || [];
@@ -48,80 +121,54 @@ router.post('/tv', upload.any(), asyncRoute(async (req, res) => {
     return res.status(400).json({ error: 'No file uploaded. Attach at least one export.' });
   }
 
+  const runId = randomUUID();
   const perFile = [];
   const micosParsed = [];
   const mediaWatchSpots = [];
   const adexRows = [];
   const warnings = [];
+  const forArchive = [];
 
   try {
     for (const file of files) {
-      const detail = { file: file.originalname, size_bytes: file.size, kind: null, warnings: [] };
+      const slot = DATASETS[file.fieldname] ? file.fieldname : null;
+      const detail = {
+        file: file.originalname,
+        slot,
+        size_bytes: file.size,
+        kind: null,
+        warnings: [],
+      };
 
-      const micos = await parseMicosWorkbook(file.buffer, { sourceFile: file.originalname })
-        .catch((err) => ({ error: err.message }));
+      const result = await classify(file);
+      detail.kind = result.kind;
+      detail.rows = result.rows;
+      detail.sheets = result.sheets;
+      detail.warnings.push(...(result.warnings || []));
+      if (result.target_audience) detail.target_audience = result.target_audience;
+      if (result.period) detail.period = result.period;
 
-      const micosRowCount = micos.error
-        ? 0
-        : micos.programmes.length + micos.channelPerformance.length
-          + micos.channelDays.length + micos.channelDayparts.length + micos.spots.length;
+      if (result.kind === 'micos_dashboard') micosParsed.push(result.micos);
+      else if (result.kind === 'media_watch') mediaWatchSpots.push(...result.spots);
+      else if (result.kind === 'adex') adexRows.push(...result.adexRows);
 
-      if (micosRowCount > 0) {
-        micosParsed.push(micos);
-        detail.kind = 'micos_dashboard';
-        detail.target_audience = micos.meta.target_audience;
-        detail.period = { from: micos.meta.period_start, to: micos.meta.period_end };
-        detail.sheets = micos.sheets;
-        detail.rows = {
-          programmes: micos.programmes.length,
-          channel_performance: micos.channelPerformance.length,
-          days: micos.channelDays.length,
-          dayparts: micos.channelDayparts.length,
-          spots: micos.spots.length,
-        };
-        detail.warnings.push(...micos.warnings);
-        perFile.push(detail);
-        continue;
+      // A file dropped in the wrong slot still loads, but say so - silently
+      // accepting it is how a planner ends up believing a dataset is present
+      // when it never was.
+      if (slot && result.kind !== 'unrecognised' && !slotMatches(slot, result.kind)) {
+        detail.warnings.push(
+          `Uploaded under "${DATASETS[slot]}" but read as ${result.kind.replace('_', ' ')}. `
+          + 'It has been loaded correctly; the slot label is only a hint.',
+        );
       }
 
-      const mw = await parseMediaWatch(file.buffer, { sourceFile: file.originalname })
-        .catch((err) => ({ spots: [], sheets: [], warnings: [err.message] }));
-
-      if (mw.spots.length) {
-        mediaWatchSpots.push(...mw.spots);
-        detail.kind = 'media_watch';
-        detail.rows = { spots: mw.spots.length };
-        detail.sheets = mw.sheets;
-        detail.warnings.push(...mw.warnings);
-        perFile.push(detail);
-        continue;
+      if (result.kind !== 'unrecognised') {
+        forArchive.push({
+          name: file.originalname,
+          buffer: file.buffer,
+          dataset: result.kind === 'adex' ? 'adex' : (slot || result.kind),
+        });
       }
-
-      // Adex monthly spend. Normally this arrives by Drive sync, but the same
-      // workbooks get handed over directly often enough that refusing them
-      // here just sends people looking for an upload button that doesn't exist.
-      const adex = await parseAdexWorkbook(file.buffer, { sourceFile: file.originalname })
-        .catch((err) => ({ rows: [], sheets: [], warnings: [err.message] }));
-
-      if (adex.rows.length) {
-        adexRows.push(...adex.rows);
-        detail.kind = 'adex';
-        detail.rows = { adex: adex.rows.length };
-        detail.sheets = adex.sheets;
-        detail.warnings.push(...adex.warnings);
-        perFile.push(detail);
-        continue;
-      }
-
-      detail.kind = 'unrecognised';
-      detail.sheets = micos.error ? [] : micos.sheets;
-      detail.warnings.push(
-        micos.error
-          ? `Could not read as a workbook: ${micos.error}`
-          : 'This file did not match a MICOS dashboard export, a media watch spot log, or an '
-            + 'adex workbook. Check the header row names the columns the parser looks for.',
-        ...(mw.warnings || []),
-      );
       perFile.push(detail);
     }
 
@@ -136,16 +183,16 @@ router.post('/tv', upload.any(), asyncRoute(async (req, res) => {
     }
 
     // A MICOS export's Target sheet does not always carry the "Custom TG" line
-    // - the spot-level GRP export supplied omits it. When another file in the
-    // same upload declares one, apply it rather than storing the rows against a
-    // blank audience, and say so. Files uploaded together are one survey.
+    // - the spot-level GRP export omits it. When another file in the same
+    // upload declares one, apply it rather than storing rows against a blank
+    // audience, and say so. Files uploaded together are one survey.
     const declared = micosParsed.map((m) => m.meta.target_audience).filter(Boolean);
     const audienceOverride = declared.length ? declared[0] : null;
     if (audienceOverride && micosParsed.some((m) => !m.meta.target_audience)) {
       warnings.push(
-        `Some files in this upload did not state a target group; "${audienceOverride}" was ` +
-        'taken from the others in the same upload. Re-upload separately if they cover ' +
-        'different audiences.',
+        `Some files in this upload did not state a target group; "${audienceOverride}" was `
+        + 'taken from the others in the same upload. Re-upload separately if they cover '
+        + 'different audiences.',
       );
     }
 
@@ -154,21 +201,31 @@ router.post('/tv', upload.any(), asyncRoute(async (req, res) => {
       const result = await persistMicos(parsed, { audienceOverride });
       for (const key of Object.keys(persisted)) persisted[key] += result[key] ?? 0;
     }
-    const mwResult = mediaWatchSpots.length
-      ? await persistMediaWatch(mediaWatchSpots)
-      : { spots: 0 };
+    const mwResult = mediaWatchSpots.length ? await persistMediaWatch(mediaWatchSpots) : { spots: 0 };
     const adexUpserted = adexRows.length ? await upsertAdexRows(adexRows) : 0;
 
+    // Archive last: the data is already safely in Postgres, so a Drive outage
+    // degrades to "not archived" rather than failing the upload.
+    const archive = await archiveUpload(forArchive, { runId });
+
     log.info('upload ingested', {
-      files: files.length, ...persisted, mediaWatch: mwResult.spots, adex: adexUpserted,
+      runId, files: files.length, ...persisted,
+      mediaWatch: mwResult.spots, adex: adexUpserted, archived: archive.archived.length,
     });
 
     res.json({
       ok: true,
+      run_id: runId,
       files: perFile,
       persisted: { ...persisted, media_watch_spots: mwResult.spots, adex_rows: adexUpserted },
       target_audience: audienceOverride,
       warnings,
+      archive: {
+        archived: archive.archived.length,
+        folder_id: archive.folderId || null,
+        skipped: archive.skipped || null,
+        hint: archive.hint || null,
+      },
       // Stated explicitly so the guarantee is visible to whoever calls the API.
       source_files_retained: false,
       facets: await micosFacets(pool),
@@ -182,9 +239,45 @@ router.post('/tv', upload.any(), asyncRoute(async (req, res) => {
   }
 }));
 
-/** What TVR/cost data is currently loaded. */
+/** Which content kinds a slot is expected to hold. */
+function slotMatches(slot, kind) {
+  if (slot === 'media_watch') return kind === 'media_watch';
+  if (slot === 'adex') return kind === 'adex';
+  // The four MICOS slots are all dashboard exports.
+  return kind === 'micos_dashboard';
+}
+
+/** The upload slots the UI renders, so the list lives in one place. */
+router.get('/datasets', (_req, res) => {
+  res.json({
+    datasets: Object.entries(DATASETS).map(([key, label]) => ({
+      key,
+      label,
+      // Adex accumulates; everything else is a point-in-time survey.
+      retained: key === 'adex',
+    })),
+  });
+});
+
+/** What data is currently loaded. */
 router.get('/tv/summary', asyncRoute(async (_req, res) => {
-  res.json(await micosFacets(pool));
+  const [ratings, adex, archive] = await Promise.all([
+    micosFacets(pool), adexFacets(), archiveStatus(20),
+  ]);
+  res.json({ ratings, adex, archive });
+}));
+
+/** Remove archived sources from Drive. Adex is kept regardless. */
+router.post('/archive/purge', asyncRoute(async (req, res) => {
+  const result = await purgeArchive({
+    runId: req.body?.run_id || null,
+    olderThanHours: req.body?.older_than_hours || null,
+  });
+  res.json(result);
+}));
+
+router.get('/archive', asyncRoute(async (_req, res) => {
+  res.json(await archiveStatus(100));
 }));
 
 /**

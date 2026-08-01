@@ -1,6 +1,9 @@
 import express from 'express';
 import { asyncRoute } from '../util/asyncRoute.js';
-import { generatePlan, getPlan, listPlans, latestPlanForBrief, reaggregate } from '../services/planService.js';
+import {
+  generatePlan, getPlan, listPlans, latestPlanForBrief, reaggregate, getSchedule,
+} from '../services/planService.js';
+import { purgeArchive } from '../services/driveArchive.js';
 import { buildAggregatedData } from '../services/aggregate.js';
 import { getBrief } from '../services/briefRepo.js';
 import { generateReport } from '../services/reportService.js';
@@ -20,9 +23,13 @@ router.post('/generate/:briefId', asyncRoute(async (req, res) => {
   res.status(201).json({
     plan_id: result.plan.id,
     brief_id: briefId,
-    recommended_lineup: result.recommendation.recommended_lineup,
+    channel_plan: result.recommendation.channel_plan,
+    schedule: result.recommendation.schedule,
+    schedule_totals: result.recommendation.schedule_totals,
     overall_rationale: result.recommendation.overall_rationale,
     competitor_analysis: result.recommendation.competitor_analysis,
+    clutter_strategy: result.recommendation.clutter_strategy,
+    clutter: result.recommendation.clutter,
     budget_fit: result.recommendation.budget_fit,
     budget: result.recommendation.budget,
     confidence: result.recommendation.confidence,
@@ -76,13 +83,35 @@ router.get('/brief/:briefId/filter', asyncRoute(async (req, res) => {
   res.json(result);
 }));
 
-/** Stream the PDF report for a plan. */
+/** The dated schedule for a plan. */
+router.get('/:id/schedule', asyncRoute(async (req, res) => {
+  const planId = Number(req.params.id);
+  const lines = await getSchedule(planId);
+  if (!lines.length) return res.status(404).json({ error: 'No schedule stored for this plan' });
+
+  // Column headers for the date grid, in order.
+  const dates = [...new Set(lines.flatMap((l) => Object.keys(l.spot_dates || {})))].sort();
+  res.json({ plan_id: planId, dates, lines });
+}));
+
+/**
+ * Stream the PDF report for a plan.
+ *
+ * The report is the point at which the uploaded sources have served their
+ * purpose, so the Drive archive for them is purged here - adex excepted, since
+ * it accumulates rather than being superseded.
+ */
 router.get('/:id/report.pdf', asyncRoute(async (req, res) => {
   const { path: filePath, filename, cleanup } = await generateReport(Number(req.params.id));
-  res.download(filePath, filename, (err) => {
+  res.download(filePath, filename, async (err) => {
     // Always clear the working directory, whether or not the transfer finished.
     cleanup();
-    if (err && !res.headersSent) res.status(500).json({ error: 'Failed to send report' });
+    if (err && !res.headersSent) {
+      return res.status(500).json({ error: 'Failed to send report' });
+    }
+    if (err) return;
+    // Best effort: a file left in Drive is untidy, not a failed report.
+    purgeArchive({}).catch(() => {});
   });
 }));
 

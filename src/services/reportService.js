@@ -5,7 +5,7 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { config, ROOT } from '../config.js';
 import { log } from '../util/logger.js';
-import { getPlan } from './planService.js';
+import { getPlan, getSchedule } from './planService.js';
 import { getBrief } from './briefRepo.js';
 
 // ---------------------------------------------------------------------------
@@ -30,26 +30,32 @@ export async function generateReport(planId) {
 
   const brief = await getBrief(plan.brief_id);
   const stored = plan.chart_data || {};
+  const schedule = await getSchedule(planId);
+  // Column headers for the date grid, in order.
+  const scheduleDates = [...new Set(schedule.flatMap((l) => Object.keys(l.spot_dates || {})))].sort();
 
   const payload = {
     brief: brief || {},
     plan: {
       id: plan.id,
-      recommended_lineup: plan.recommended_lineup || [],
+      channel_plan: plan.recommended_lineup || [],
       overall_rationale: plan.overall_rationale,
       competitor_analysis: plan.competitor_analysis,
       confidence: plan.confidence,
       gaps_or_caveats: plan.gaps_or_caveats,
       budget_fit: stored.budget_fit || '',
+      clutter_strategy: stored.clutter_strategy || '',
       model_used: plan.model_used,
       created_at: plan.created_at,
     },
+    schedule: { lines: schedule, dates: scheduleDates, totals: stored.schedule_totals || {} },
+    clutter: stored.clutter || {},
     // chart_data holds the derived series plus the aggregates the model saw.
     chart_data: {
       competitor_spend: stored.competitor_spend,
       programme_ratings: stored.programme_ratings,
       day_of_week: stored.day_of_week,
-      medium_split: stored.medium_split,
+      time_belts: stored.time_belts,
     },
     aggregated: stored.aggregated || {},
     budget: stored.budget || {},

@@ -58,9 +58,12 @@ def build(path):
     ))
     story.append(Spacer(1, 6 * mm))
 
-    story.append(Paragraph("Medium Split", styles["Heading3"]))
+    story.append(Paragraph("Commercial Lengths", styles["Heading3"]))
     story.append(Table(
-        [["Medium", "Share"], ["TV", "70%"], ["Radio", "20%"], ["Press", "10%"]],
+        [["Copy", "Duration"],
+         ["Master TVC", "30 sec"],
+         ["Cutdown", "20 sec"],
+         ["Reminder", "10 sec"]],
         colWidths=[40 * mm, 30 * mm],
         style=grid,
     ))

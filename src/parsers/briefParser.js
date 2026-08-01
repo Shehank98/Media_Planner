@@ -156,13 +156,6 @@ const LABELS = {
   ],
 };
 
-const MEDIUM_KEYS = {
-  tv: ['tv', 'television'],
-  radio: ['radio'],
-  press: ['press', 'print', 'newspaper', 'newspapers'],
-  digital: ['digital', 'online', 'social'],
-  outdoor: ['outdoor', 'ooh', 'billboard'],
-};
 
 /**
  * Parse a brief PDF into proposed field values.
@@ -185,7 +178,7 @@ export async function parseBriefPdf(buffer, { sourceFile = null } = {}) {
     territory: null,
     period_start: null,
     period_end: null,
-    medium_split: null,
+    commercial_durations: [],
     source_file: sourceFile,
   };
   const found = {};
@@ -216,9 +209,12 @@ export async function parseBriefPdf(buffer, { sourceFile = null } = {}) {
     }
   }
 
-  fields.medium_split = parseMediumSplit(texts);
-  if (!fields.medium_split) {
-    warnings.push('No medium split found in the brief - confirm the TV/radio/press split manually.');
+  fields.commercial_durations = parseCommercialDurations(texts);
+  if (!fields.commercial_durations.length) {
+    warnings.push(
+      'No commercial lengths were found in the brief - enter the copy durations you will buy '
+      + '(10s, 15s, 20s, 30s) before generating a plan.',
+    );
   }
 
   // A period sometimes appears as a bare date range with no label at all.
@@ -466,30 +462,40 @@ export function parseBudget(value) {
 }
 
 /**
- * Medium split, as percentages keyed by medium.
+ * Commercial lengths the brief asks for.
  *
- * Accepts "TV 60% Radio 25% Press 15%" on one line and the same thing spread
- * down a small table. Percentages are kept as given - if they don't total 100
- * that's flagged rather than silently rescaled, because it usually means the
- * parse missed a row.
+ * A TV plan is built per copy length, so these drive the whole buy: which
+ * programmes are affordable at 30s versus 10s, and what a spot costs. Briefs
+ * write them as "30 sec", "TVC 20s", "10/15/30", or a bare list.
  */
-export function parseMediumSplit(texts) {
-  const split = {};
+export function parseCommercialDurations(texts) {
+  const found = new Set();
+
   for (const line of texts) {
-    for (const [key, aliases] of Object.entries(MEDIUM_KEYS)) {
-      if (key in split) continue;
-      for (const alias of aliases) {
-        const m = line.match(new RegExp(`\\b${escape(alias)}\\b[^0-9%]{0,20}(\\d{1,3}(?:\\.\\d+)?)\\s*%`, 'i'));
-        if (m) {
-          split[key] = Number.parseFloat(m[1]);
-          break;
+    // "30 sec", "20s", "15 seconds" - the explicit forms.
+    for (const m of line.matchAll(/\b(\d{1,3})\s*(?:sec|secs|second|seconds|s)\b/gi)) {
+      const secs = Number(m[1]);
+      if (isPlausibleDuration(secs)) found.add(secs);
+    }
+    // "10/15/30" or "10 / 20 / 30" next to a length-ish word.
+    if (/\b(?:sec|secs|second|seconds|duration|length|copy|tvc|commercial|edit)\b/i.test(line)) {
+      for (const m of line.matchAll(/\b(\d{1,3})(?:\s*\/\s*(\d{1,3}))+/g)) {
+        for (const part of m[0].split('/')) {
+          const secs = Number(part.trim());
+          if (isPlausibleDuration(secs)) found.add(secs);
         }
       }
     }
   }
-  if (!Object.keys(split).length) return null;
+  return [...found].sort((a, b) => a - b);
+}
 
-  const total = Object.values(split).reduce((a, b) => a + b, 0);
-  if (Math.abs(total - 100) > 1) split._note = `Percentages total ${total}, not 100 - verify.`;
-  return split;
+/**
+ * Commercials run between 5 and 120 seconds in practice.
+ *
+ * Without a bound, "18%" and "2026" in the same line both read as durations -
+ * the digits are indistinguishable once the unit is stripped.
+ */
+function isPlausibleDuration(secs) {
+  return Number.isFinite(secs) && secs >= 5 && secs <= 120;
 }

@@ -274,6 +274,74 @@ CREATE TABLE IF NOT EXISTS plan_recommendations (
 );
 CREATE INDEX IF NOT EXISTS idx_plan_brief ON plan_recommendations (brief_id, created_at DESC);
 
+-- ---------------------------------------------------------------------------
+-- Runtime settings.
+--
+-- Drive configuration lives here rather than only in environment variables so
+-- a planner can point the app at a different folder without a redeploy. Env
+-- vars remain the fallback, which keeps existing deployments working and gives
+-- a way to seed a fresh one.
+--
+-- Values marked secret are never returned by the API - only whether they are
+-- set - so a service-account private key cannot be read back out of the UI.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  is_secret BOOLEAN NOT NULL DEFAULT false,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Files archived to Drive for one planning run, so they can be purged once the
+-- report exists. Adex is deliberately excluded from purging - it is the only
+-- dataset that accumulates rather than being superseded.
+CREATE TABLE IF NOT EXISTS drive_archive (
+  id SERIAL PRIMARY KEY,
+  run_id UUID NOT NULL,
+  dataset TEXT NOT NULL,
+  file_name TEXT NOT NULL,
+  drive_file_id TEXT,
+  drive_folder_id TEXT,
+  bytes INTEGER,
+  keep BOOLEAN NOT NULL DEFAULT false,
+  purged_at TIMESTAMPTZ,
+  error TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_drive_archive_run ON drive_archive (run_id);
+CREATE INDEX IF NOT EXISTS idx_drive_archive_pending
+  ON drive_archive (purged_at) WHERE purged_at IS NULL AND keep = false;
+
+-- The generated schedule: one row per channel/programme/day-pattern line, plus
+-- the dated spot grid. Stored separately from plan_recommendations because it
+-- is derived deterministically from the plan and the campaign dates, and gets
+-- regenerated when either changes.
+CREATE TABLE IF NOT EXISTS plan_schedule (
+  id SERIAL PRIMARY KEY,
+  plan_id INTEGER REFERENCES plan_recommendations(id) ON DELETE CASCADE,
+  channel_name TEXT NOT NULL,
+  programme_name TEXT NOT NULL,
+  day_pattern TEXT,
+  time_band TEXT,
+  time_start TEXT,
+  time_end TEXT,
+  duration_secs INTEGER,
+  spots INTEGER,
+  tvr NUMERIC,
+  rate_lkr NUMERIC,
+  cost_lkr NUMERIC,
+  -- date -> spots for that line, e.g. {"2026-09-01": 1, "2026-09-03": 1}
+  spot_dates JSONB,
+  line_order INTEGER,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_plan_schedule_plan ON plan_schedule (plan_id, line_order);
+
+-- Commercial durations the planner will buy (10s, 15s, 20s, 30s). Replaces the
+-- TV/radio/press percentage split, which does not survive contact with how a
+-- TV plan is actually built.
+ALTER TABLE campaign_briefs ADD COLUMN IF NOT EXISTS commercial_durations JSONB;
+
 -- Sync run log (Section 3) - what landed, when, and what broke.
 CREATE TABLE IF NOT EXISTS sync_log (
   id SERIAL PRIMARY KEY,

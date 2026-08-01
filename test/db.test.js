@@ -172,7 +172,7 @@ async function sampleBrief(overrides = {}) {
     period_start: '2026-08-01',
     period_end: '2026-09-30',
     budget_lkr_lakhs: 250,
-    medium_split: { tv: 70, radio: 20, press: 10 },
+    commercial_durations: [10, 20, 30],
     ...overrides,
   });
 }
@@ -261,14 +261,25 @@ test('adex competitor scoping excludes the brief brand', { skip }, async () => {
 
 // --- briefs ----------------------------------------------------------------
 
-test('briefs round-trip the campaign period', { skip }, async () => {
+test('briefs round-trip the campaign period and commercial lengths', { skip }, async () => {
   const brief = await sampleBrief();
   assert.equal(brief.period_start, '2026-08-01');
   assert.equal(brief.period_end, '2026-09-30');
 
   const fetched = await briefRepo.getBrief(brief.id);
   assert.equal(fetched.period_start, '2026-08-01');
-  assert.deepEqual(fetched.medium_split, { tv: 70, radio: 20, press: 10 });
+  assert.deepEqual(fetched.commercial_durations, [10, 20, 30]);
+});
+
+test('commercial lengths are sorted, de-duplicated and defaulted', { skip }, async () => {
+  const messy = await briefRepo.insertBrief({
+    brand: 'X', commercial_durations: [30, 10, 30, '20'],
+  });
+  assert.deepEqual(messy.commercial_durations, [10, 20, 30]);
+
+  // A brief that names none still produces a plan rather than blocking.
+  const none = await briefRepo.insertBrief({ brand: 'Y' });
+  assert.deepEqual(none.commercial_durations, [15, 20, 30]);
 });
 
 test('a brief with no period is allowed', { skip }, async () => {

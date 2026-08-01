@@ -164,3 +164,61 @@ h3 { font-size: 13.5px; margin: 18px 0 4px; text-transform: uppercase; letter-sp
   .grid { grid-template-columns: 1fr 1fr; }
   .grid .span2 { grid-column: span 2; }
 }
+
+/* --- tabs ----------------------------------------------------------------- */
+
+.tabs { display: flex; gap: 4px; margin: -8px auto 18px; }
+.tab {
+  background: none; border: none; border-bottom: 2px solid transparent;
+  border-radius: 0; padding: 8px 14px; color: var(--muted); font-weight: 600;
+}
+.tab:hover { color: var(--ink); }
+.tab.active { color: var(--ink); border-bottom-color: var(--accent); }
+
+/* --- per-dataset upload slots --------------------------------------------- */
+
+.slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.drop.slot { padding: 14px; text-align: left; }
+.drop.slot span { font-size: 13px; }
+.slot-file { display: block; color: var(--muted); font-size: 11.5px; margin-top: 3px; }
+
+/* --- commercial durations ------------------------------------------------- */
+
+.durations { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.dur-label { font-size: 12.5px; font-weight: 600; color: #4a515a; width: 100%; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.dur-chip {
+  background: #eef1f4; color: #4a515a; border: 1px solid transparent;
+  border-radius: 20px; padding: 5px 13px; font-size: 13px;
+}
+.dur-chip.on { background: var(--accent); color: #fff; }
+.dur-custom { max-width: 120px; padding: 7px 10px; border: 1px solid #ccd2d9; border-radius: 6px; font: inherit; font-size: 13px; }
+.small-btn { padding: 7px 12px; font-size: 13px; }
+.dur-hint { width: 100%; color: var(--muted); font-size: 12px; }
+
+.grid .span3 { grid-column: span 3; }
+.grid textarea {
+  font: inherit; font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 8px 10px; border: 1px solid #ccd2d9; border-radius: 6px; background: #fff;
+  color: var(--ink); resize: vertical;
+}
+.grid textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+.checkbox { flex-direction: row !important; align-items: center; gap: 8px; font-weight: 400 !important; }
+.checkbox input { width: auto; }
+.optional { color: var(--muted); font-weight: 400; }
+
+/* --- channel-first plan --------------------------------------------------- */
+
+.channel-head {
+  display: flex; align-items: baseline; gap: 10px;
+  margin: 22px 0 2px; padding-bottom: 6px; border-bottom: 2px solid var(--ink);
+}
+.channel-head h3 {
+  margin: 0; font-size: 15px; text-transform: none; letter-spacing: 0;
+  color: var(--ink); font-weight: 700;
+}
+.small-prose { font-size: 13px; color: #4a515a; margin: 6px 0 2px; }
+
+@media (max-width: 720px) {
+  .grid .span3 { grid-column: span 2; }
+}

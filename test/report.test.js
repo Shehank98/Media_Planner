@@ -9,32 +9,78 @@ import { SAMPLE_AGGREGATED, SAMPLE_BRIEF } from './fixtures.js';
 
 const PLAN = {
   id: 1,
-  recommended_lineup: [
-    { channel: 'HIRU TV', programme: 'PAATA KURULLO', day: 'Tuesday', day_part: 'Evening Peak (1900 - 2059)',
-      spot_duration_secs: 15, spots: 8, rating: 21.33, est_cost_lkr: 1160000,
-      rationale: 'Highest rated programme on the panel, and Hiru carries 28% share of audience.',
-      in_source_data: true, cost_supported: true },
-    { channel: 'DERANA TV', programme: 'SANGEETHE - SEASON 2', day: 'Tuesday', day_part: 'Evening Peak (1900 - 2059)',
-      spot_duration_secs: 15, spots: 6, rating: 10.54, est_cost_lkr: null,
-      rationale: 'Derana peaks Tuesday in evening peak; heaviest competitor block at 554 GRP.',
-      in_source_data: true, cost_supported: null },
-    { channel: 'SIRASA TV', programme: 'Invented Mega Show', day: 'Monday', day_part: 'Evening Peak (1900 - 2059)',
-      spot_duration_secs: 30, spots: 5, rating: 18.0, est_cost_lkr: 900000,
-      rationale: 'Not present in the supplied data.',
-      in_source_data: false, cost_supported: null },
+  channel_plan: [
+    {
+      channel: 'HIRU TV', share_of_audience: 28.04, in_source_data: true,
+      why_this_channel: 'Highest share of audience on the panel with 68% individual reach.',
+      programmes: [
+        { programme: 'PAATA KURULLO', day_pattern: 'MON - FRI',
+          time_band: 'Evening Peak (1900 - 2059)', duration_secs: 20, spots: 8, tvr: 21.33,
+          rate_lkr: 145000, rationale: 'Top-rated programme for the panel; Dove and Lifebuoy are already here.',
+          in_source_data: true, rate_supported: true },
+        { programme: 'AKURATA YANA WELAWE', day_pattern: 'SAT - SUN',
+          time_band: 'Evening Peak (1900 - 2059)', duration_secs: 20, spots: 4, tvr: 19.96,
+          rate_lkr: null, rationale: 'Weekend extension at near-equal rating.',
+          in_source_data: true, rate_supported: null },
+      ],
+    },
+    {
+      channel: 'DERANA TV', share_of_audience: 19.81, in_source_data: true,
+      why_this_channel: 'Highest individual reach, so it adds people Hiru alone does not reach.',
+      programmes: [
+        { programme: 'Invented Mega Show', day_pattern: 'MON - FRI',
+          time_band: 'Afternoon (1300 - 1559)', duration_secs: 10, spots: 6, tvr: 10.54,
+          rate_lkr: 900000, rationale: 'Not present in the supplied data.',
+          in_source_data: false, rate_supported: null },
+      ],
+    },
   ],
-  overall_rationale: 'Hiru and Derana together carry 48% of panel share for Meera 16-45, and both peak in Tuesday evening peak. The plan concentrates TV weight there rather than spreading across the week.',
-  competitor_analysis: 'Dove and Lifebuoy dominate the top teledrama blocks - 554 GRP in Sangeethe and 453 in Paata Kurullo. Sunsilk is already present but at lower weight.',
-  budget_fit: 'The costed lines total LKR 20.6 lakhs against a 250 lakh budget; the Derana line has no observed rate.',
+  overall_rationale: 'Hiru and Derana together carry 48% of panel share for Meera 16-45 and, between them, 78% individual reach.',
+  competitor_analysis: 'Dove and Lifebuoy dominate the top teledrama blocks - 554 GRP in Sangeethe and 453 in Paata Kurullo.',
+  clutter_strategy: 'Evening Peak takes 12 of 18 spots. The rest sits in the afternoon, away from the crowded break.',
+  budget_fit: 'Only the Paata Kurullo line has an observed rate.',
   confidence: 'medium',
-  gaps_or_caveats: 'Rating data covers June 2026 only.\n\nAutomated check: 1 recommended entry could not be matched to the supplied rating data (SIRASA TV - Invented Mega Show).',
+  gaps_or_caveats: 'Media watch coverage is thin.',
   model_used: 'gemini:gemini-2.5-flash',
 };
 
 const BUDGET = {
-  total_cost_lkr: 2060000, total_cost_lakhs: 20.6, budget_lkr: 25000000,
-  budget_lakhs: 250, utilisation_pct: 8.2, over_budget: false,
-  costed_lines: 2, uncosted_lines: 1,
+  total_cost_lkr: 1160000, total_cost_lakhs: 11.6, budget_lkr: 25000000,
+  budget_lakhs: 250, utilisation_pct: 4.6, over_budget: false,
+  total_spots: 18, costed_spots: 8, uncosted_spots: 10,
+};
+
+const SCHEDULE = {
+  dates: ['2026-09-01', '2026-09-03', '2026-09-05', '2026-09-08'],
+  lines: [
+    { channel_name: 'HIRU TV', programme_name: 'PAATA KURULLO', day_pattern: 'MON - FRI',
+      time_band: 'Evening Peak (1900 - 2059)', duration_secs: 20, spots: 8, rate_lkr: 145000,
+      cost_lkr: 1160000, spot_dates: { '2026-09-01': 4, '2026-09-03': 4 } },
+    { channel_name: 'HIRU TV', programme_name: 'AKURATA YANA WELAWE', day_pattern: 'SAT - SUN',
+      time_band: 'Evening Peak (1900 - 2059)', duration_secs: 20, spots: 4, rate_lkr: null,
+      cost_lkr: null, spot_dates: { '2026-09-05': 4 } },
+    { channel_name: 'DERANA TV', programme_name: 'Invented Mega Show', day_pattern: 'MON - FRI',
+      time_band: 'Afternoon (1300 - 1559)', duration_secs: 10, spots: 6, rate_lkr: 900000,
+      cost_lkr: null, spot_dates: { '2026-09-08': 6 } },
+  ],
+  totals: {
+    channels: [
+      { channel_name: 'HIRU TV', spots: 12, cost_lkr: 1160000, lines: 2, uncosted_lines: 1 },
+      { channel_name: 'DERANA TV', spots: 6, cost_lkr: 0, lines: 1, uncosted_lines: 1 },
+    ],
+    total_spots: 18, total_cost_lkr: 1160000,
+  },
+};
+
+const CLUTTER = {
+  total_spots: 18,
+  by_belt: [
+    { time_belt: 'Evening Peak (1900 - 2059)', spots: 12, share_pct: 66.7 },
+    { time_belt: 'Afternoon (1300 - 1559)', spots: 6, share_pct: 33.3 },
+  ],
+  issues: [{ severity: 'high', time_belt: 'Evening Peak (1900 - 2059)',
+    detail: '66.7% of all spots sit in Evening Peak (1900 - 2059).' }],
+  ok: false,
 };
 
 function runPython(args) {
@@ -64,32 +110,42 @@ test('chart data is derived from the aggregates', () => {
   assert.deepEqual(own.values, [1650, 1150]);
 });
 
-test('chart data marks which programmes made the lineup', () => {
+test('chart data marks which programmes made the plan', () => {
   const charts = buildChartData(SAMPLE_AGGREGATED, PLAN, SAMPLE_BRIEF);
   const items = charts.programme_ratings.items;
   assert.equal(items[0].label, 'PAATA KURULLO (HIRU TV)', 'ranked by rating');
-  assert.equal(items[0].recommended, true);
-  assert.equal(items.find((i) => i.label.startsWith('AKURATA')).recommended, false);
+  assert.equal(items[0].recommended, true, 'reads programmes nested under channels');
+  assert.equal(items.find((i) => i.label.startsWith('SANGEETHE')).recommended, false);
 });
 
-test('medium split charts the brief against the category benchmark', () => {
-  const charts = buildChartData(SAMPLE_AGGREGATED, PLAN, SAMPLE_BRIEF);
-  assert.equal(charts.medium_split.brief.available, true);
-  assert.deepEqual(
-    charts.medium_split.brief.slices,
-    [{ label: 'TV', value: 70 }, { label: 'Radio', value: 20 }, { label: 'Press', value: 10 }],
+test('the day chart shades the days the plan actually buys', () => {
+  const charts = buildChartData(SAMPLE_AGGREGATED, { ...PLAN, clutter: CLUTTER }, SAMPLE_BRIEF);
+  // "MON - FRI" and "SAT - SUN" have to be expanded before they can be matched
+  // against day columns.
+  assert.deepEqual(charts.day_of_week.highlighted,
+    ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']);
+});
+
+test('the time-belt chart contrasts the plan with competitor activity', () => {
+  const charts = buildChartData(SAMPLE_AGGREGATED, { ...PLAN, clutter: CLUTTER }, SAMPLE_BRIEF);
+  const belts = charts.time_belts;
+  assert.equal(belts.available, true);
+
+  const plan = belts.series.find((s) => s.is_plan);
+  const competitors = belts.series.find((s) => !s.is_plan);
+  assert.ok(plan && competitors, 'both series present');
+
+  const peak = belts.categories.indexOf('Evening Peak (1900 - 2059)');
+  assert.ok(peak >= 0);
+  assert.equal(plan.values[peak], 66.7, "the plan's own share");
+  assert.ok(competitors.values[peak] > 0, 'against observed competitor activity');
+});
+
+test('the time-belt chart reports unavailable rather than empty', () => {
+  const charts = buildChartData(
+    { ...SAMPLE_AGGREGATED, time_belt_clutter: [] }, {}, SAMPLE_BRIEF,
   );
-
-  const benchmark = charts.medium_split.benchmark;
-  assert.equal(benchmark.available, true);
-  const total = benchmark.slices.reduce((a, s) => a + s.value, 0);
-  assert.ok(Math.abs(total - 100) < 0.5, `benchmark shares should total 100, got ${total}`);
-});
-
-test('medium split copes with a brief that states no split', () => {
-  const charts = buildChartData(SAMPLE_AGGREGATED, PLAN, { ...SAMPLE_BRIEF, medium_split: null });
-  assert.equal(charts.medium_split.brief.available, false);
-  assert.equal(charts.medium_split.benchmark.available, true, 'the benchmark still renders');
+  assert.equal(charts.time_belts.available, false);
 });
 
 test('the python worker renders a complete PDF', async () => {
@@ -98,9 +154,11 @@ test('the python worker renders a complete PDF', async () => {
     const payload = {
       brief: SAMPLE_BRIEF,
       plan: PLAN,
-      chart_data: buildChartData(SAMPLE_AGGREGATED, PLAN, SAMPLE_BRIEF),
+      chart_data: buildChartData(SAMPLE_AGGREGATED, { ...PLAN, clutter: CLUTTER }, SAMPLE_BRIEF),
       aggregated: SAMPLE_AGGREGATED,
       budget: BUDGET,
+      schedule: SCHEDULE,
+      clutter: CLUTTER,
       meta: { model_used: 'gemini:gemini-2.5-flash' },
     };
     const payloadPath = path.join(dir, 'payload.json');
@@ -116,7 +174,7 @@ test('the python worker renders a complete PDF', async () => {
     assert.equal(head, '%PDF-', 'output is a real PDF');
 
     for (const chart of ['competitor_spend.png', 'programme_ratings.png',
-      'day_of_week.png', 'medium_split.png']) {
+      'day_of_week.png', 'time_belts.png']) {
       const s = await fs.stat(path.join(dir, chart));
       assert.ok(s.size > 5_000, `${chart} did not render`);
     }
@@ -134,10 +192,11 @@ test('the report renders even with no data at all', async () => {
       scope: {}, competitor_spend_by_quarter: [], own_brand_trend: [],
       category_totals_by_quarter: [], programme_ratings: [], channel_performance: [],
       best_days: [], best_dayparts: [], programme_rates: [], competitor_spot_pressure: [],
+      time_belt_clutter: [],
       data_notes: ['No programme rating data is available for this brief.'],
     };
     const emptyPlan = {
-      recommended_lineup: [], overall_rationale: '', competitor_analysis: '',
+      channel_plan: [], overall_rationale: '', competitor_analysis: '',
       confidence: 'low', gaps_or_caveats: 'No data was available.',
     };
     const payload = {

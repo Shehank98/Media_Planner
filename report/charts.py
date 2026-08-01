@@ -193,43 +193,50 @@ def programme_rating_chart(data, out_dir):
     return _save(fig, path)
 
 
-def medium_split_chart(data, out_dir):
-    """Side-by-side donuts: the brief's split against the category benchmark."""
-    path = os.path.join(out_dir, "medium_split.png")
-    brief = data.get("brief") or {}
-    benchmark = data.get("benchmark") or {}
-    panels = [p for p in (brief, benchmark) if p.get("available") and p.get("slices")]
-    if not panels:
-        return _placeholder(path, "No medium split available from the brief, and no category spend to benchmark against.")
+def time_belt_chart(data, out_dir):
+    """Plan share vs competitor share, per time belt."""
+    path = os.path.join(out_dir, "time_belts.png")
+    categories = data.get("categories") or []
+    series = data.get("series") or []
+    if not categories or not series:
+        return _placeholder(path, "No time-belt data available.")
 
-    fig, axes = plt.subplots(1, len(panels), figsize=(4.6 * len(panels), 4.0))
-    if len(panels) == 1:
-        axes = [axes]
+    n_series = len(series)
+    group_width = 0.8
+    bar_width = group_width / n_series
+    positions = range(len(categories))
 
-    for ax, panel in zip(axes, panels):
-        slices = panel["slices"]
-        values = [s.get("value") or 0 for s in slices]
-        labels = [s.get("label", "") for s in slices]
-        wedges, _texts, autotexts = ax.pie(
-            values,
-            labels=labels,
-            autopct=lambda pct: f"{pct:.0f}%",
-            startangle=90,
-            counterclock=False,
-            colors=PALETTE[: len(values)],
-            wedgeprops={"width": 0.42, "edgecolor": "white", "linewidth": 1.6},
-            textprops={"fontsize": 8.5, "color": TEXT},
-            pctdistance=0.78,
+    fig, ax = plt.subplots(figsize=(9, 4.6))
+    for idx, s in enumerate(series):
+        offset = -group_width / 2 + bar_width * (idx + 0.5)
+        ax.bar(
+            [p + offset for p in positions],
+            s.get("values") or [],
+            width=bar_width * 0.92,
+            label=s.get("label", ""),
+            # The plan is the subject; competitor activity is context.
+            color=ACCENT if s.get("is_plan") else NEUTRAL,
+            edgecolor="white",
+            linewidth=0.4,
+            zorder=3,
         )
-        for t in autotexts:
-            t.set_color("white")
-            t.set_fontsize(8)
-            t.set_fontweight("bold")
-        ax.set_title(panel.get("label", ""), fontsize=10, color=TEXT, fontweight="bold", pad=12)
 
-    fig.suptitle(
-        data.get("title", "Medium split"),
-        fontsize=11.5, color=TEXT, fontweight="bold", x=0.02, ha="left", y=1.02,
+    ax.set_xticks(list(positions))
+    # Belt labels carry their hour range, so they are split over two lines and
+    # tilted - flat they collide with each other at this many belts.
+    ax.set_xticklabels(
+        [c.replace(" (", "\n(") for c in categories],
+        fontsize=7, rotation=30, ha="right", rotation_mode="anchor",
+    )
+    _style(
+        ax,
+        title=data.get("title", "Time-belt spread"),
+        subtitle=data.get("subtitle"),
+        ylabel=data.get("y_label", "Share of spots (%)"),
+    )
+    ax.legend(
+        frameon=False, fontsize=7.5, ncol=2,
+        loc="upper center", bbox_to_anchor=(0.5, -0.22),
     )
     return _save(fig, path)
 
@@ -297,5 +304,5 @@ def render_all(chart_data, out_dir):
         "competitor_spend": competitor_spend_chart(chart_data.get("competitor_spend") or {}, out_dir),
         "programme_ratings": programme_rating_chart(chart_data.get("programme_ratings") or {}, out_dir),
         "day_of_week": day_of_week_chart(chart_data.get("day_of_week") or {}, out_dir),
-        "medium_split": medium_split_chart(chart_data.get("medium_split") or {}, out_dir),
+        "time_belts": time_belt_chart(chart_data.get("time_belts") or {}, out_dir),
     }

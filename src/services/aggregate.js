@@ -63,6 +63,7 @@ export async function buildAggregatedData(brief, opts = {}) {
       audience_matched: tv.audience_matched,
       language: brief.language ?? null,
       budget_lkr_lakhs: brief.budget_lkr_lakhs ?? null,
+      commercial_durations: brief.commercial_durations ?? null,
     },
     // Adex: category spend context, by quarter.
     competitor_spend_by_quarter: competitors,
@@ -77,6 +78,8 @@ export async function buildAggregatedData(brief, opts = {}) {
     programme_rates: tv.programme_rates,
     // Spot-level competitive read at the slot the plan would occupy.
     competitor_spot_pressure: tv.competitor_spot_pressure,
+    // How crowded each time belt already is.
+    time_belt_clutter: tv.time_belt_clutter,
     data_notes: notes,
   };
 }

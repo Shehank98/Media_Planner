@@ -230,6 +230,21 @@ export const SAMPLE_AGGREGATED = {
     { channel_name: 'DERANA TV', programme_name: 'SANGEETHE - SEASON 2', spots: 44, brands: 5,
       total_grp: 554.43, top_brands: ['Dove', 'Lifebuoy'], own_brand_present: false },
   ],
+  // How crowded each belt already is - the context a plan is spread against.
+  time_belt_clutter: [
+    { time_belt: 'Evening Peak (1900 - 2059)', competitor_spots: 772,
+      share_of_competitor_spots_pct: 25.8, total_grp: 1840.5,
+      busiest_channels: [{ channel: 'DERANA TV', spots: 310 }, { channel: 'HIRU TV', spots: 268 }] },
+    { time_belt: 'Morning Off-Peak (0800 - 1059)', competitor_spots: 626,
+      share_of_competitor_spots_pct: 20.9, total_grp: 410.2,
+      busiest_channels: [{ channel: 'SIRASA TV', spots: 240 }] },
+    { time_belt: 'Afternoon (1300 - 1559)', competitor_spots: 523,
+      share_of_competitor_spots_pct: 17.5, total_grp: 388.1,
+      busiest_channels: [{ channel: 'DERANA TV', spots: 201 }] },
+    { time_belt: 'Early Evening (1600 - 1859)', competitor_spots: 385,
+      share_of_competitor_spots_pct: 12.9, total_grp: 402.7,
+      busiest_channels: [{ channel: 'HIRU TV', spots: 155 }] },
+  ],
   data_notes: [],
 };
 
@@ -243,5 +258,6 @@ export const SAMPLE_BRIEF = {
   period_start: '2026-08-01',
   period_end: '2026-09-30',
   budget_lkr_lakhs: 250,
-  medium_split: { tv: 70, radio: 20, press: 10 },
+  // The copy lengths the plan may buy, replacing the medium-split percentages.
+  commercial_durations: [10, 20, 30],
 };

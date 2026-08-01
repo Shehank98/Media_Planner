@@ -15,94 +15,148 @@
   </div>
 </header>
 
+<nav class="tabs wrap" role="tablist">
+  <button class="tab active" data-tab="plan" role="tab" aria-selected="true">Plan</button>
+  <button class="tab" data-tab="data" role="tab" aria-selected="false">Data</button>
+  <button class="tab" data-tab="settings" role="tab" aria-selected="false">Settings</button>
+</nav>
+
 <main class="wrap">
 
-  <!-- 1 ------------------------------------------------------------------ -->
-  <section class="card">
-    <div class="card-head">
-      <h2><span class="step">1</span> Data</h2>
-      <button id="refresh-facets" class="ghost" type="button">Refresh</button>
-    </div>
-    <p class="hint">
-      MICOS dashboard exports (TV_ChannelDetails / TV_GrpDetails), media watch spot logs, and
-      adex workbooks. Each file is recognised by its contents, so upload them together in any
-      order. Files are parsed in memory and never written to disk — only the extracted numbers
-      are kept.
-    </p>
-    <form id="upload-form">
-      <label class="drop" for="tv-files">
-        <input type="file" id="tv-files" name="files" multiple
-               accept=".xlsx,.xlsm,.xls,.csv,.tsv,.txt">
-        <span>Choose files or drop them here</span>
-        <small id="tv-files-label">.xlsx exports, or .csv/.tsv spot logs</small>
-      </label>
-      <button type="submit" class="primary">Upload &amp; parse</button>
-    </form>
-    <div id="upload-result" class="result"></div>
-    <div id="facets" class="facets"></div>
-  </section>
+  <!-- ==================== PLAN ==================== -->
+  <div id="panel-plan" class="panel">
 
-  <!-- 2 ------------------------------------------------------------------ -->
-  <section class="card">
-    <div class="card-head"><h2><span class="step">2</span> Campaign brief</h2></div>
-    <p class="hint">
-      Upload the brief PDF to pre-fill the form, then <strong>check every field before
-      saving</strong> — brief layouts are messy and the parse is a proposal, not a fact.
-    </p>
-    <form id="brief-upload-form">
-      <label class="drop small" for="brief-file">
-        <input type="file" id="brief-file" accept=".pdf">
-        <span>Choose a brief PDF</span>
-        <small id="brief-file-label">optional — you can fill the form in by hand</small>
-      </label>
-      <button type="submit" class="ghost">Parse PDF</button>
-    </form>
-    <div id="brief-warnings" class="result"></div>
+    <section class="card">
+      <div class="card-head"><h2><span class="step">1</span> Campaign brief</h2></div>
+      <p class="hint">
+        Upload the brief PDF to pre-fill the form, then <strong>check every field before
+        saving</strong> — brief layouts are messy and the parse is a proposal, not a fact.
+      </p>
+      <form id="brief-upload-form">
+        <label class="drop small" for="brief-file">
+          <input type="file" id="brief-file" accept=".pdf">
+          <span>Choose a brief PDF</span>
+          <small id="brief-file-label">optional — you can fill the form in by hand</small>
+        </label>
+        <button type="submit" class="ghost">Parse PDF</button>
+      </form>
+      <div id="brief-warnings" class="result"></div>
 
-    <form id="brief-form" class="grid">
-      <label>Brand <span class="req">*</span><input name="brand" required></label>
-      <label>Advertiser<input name="advertiser"></label>
-      <label class="span2">Objective<input name="objective"></label>
-      <label>Target audience<input name="target_audience" list="audience-list">
-        <datalist id="audience-list"></datalist></label>
-      <label>Language<input name="language"></label>
-      <label>Territory<input name="territory"></label>
-      <label>Budget (LKR lakhs)<input name="budget_lkr_lakhs" type="number" step="0.01"></label>
-      <label>Period start<input name="period_start" type="date"></label>
-      <label>Period end<input name="period_end" type="date"></label>
-      <label>TV %<input name="tv" type="number" step="1"></label>
-      <label>Radio %<input name="radio" type="number" step="1"></label>
-      <label>Press %<input name="press" type="number" step="1"></label>
-      <div class="span2 actions">
-        <button type="submit" class="primary">Save brief</button>
-        <span id="brief-saved" class="saved"></span>
+      <form id="brief-form" class="grid">
+        <label>Brand <span class="req">*</span><input name="brand" required></label>
+        <label>Advertiser<input name="advertiser"></label>
+        <label class="span2">Objective<input name="objective"></label>
+        <label>Target audience<input name="target_audience" list="audience-list">
+          <datalist id="audience-list"></datalist></label>
+        <label>Language<input name="language"></label>
+        <label>Territory<input name="territory"></label>
+        <label>Budget (LKR lakhs)<input name="budget_lkr_lakhs" type="number" step="0.01"></label>
+        <label>Period start<input name="period_start" type="date"></label>
+        <label>Period end<input name="period_end" type="date"></label>
+        <div class="span3 durations">
+          <span class="dur-label">Commercial lengths <span class="req">*</span></span>
+          <div id="duration-chips" class="chips"></div>
+          <input name="duration_custom" type="number" min="5" max="120" step="1"
+                 placeholder="other (sec)" class="dur-custom">
+          <button type="button" id="add-duration" class="ghost small-btn">Add</button>
+          <small class="dur-hint">The copy lengths you will buy. Each is planned separately.</small>
+        </div>
+        <div class="span3 actions">
+          <button type="submit" class="primary">Save brief</button>
+          <span id="brief-saved" class="saved"></span>
+        </div>
+      </form>
+    </section>
+
+    <section class="card" id="plan-card" hidden>
+      <div class="card-head"><h2><span class="step">2</span> Generate</h2></div>
+      <p class="hint">
+        Preview shows exactly what the model will be sent, and costs nothing.
+        Generating calls the model once — filtering afterwards re-runs the SQL only.
+      </p>
+      <div class="actions">
+        <button id="preview-btn" class="ghost" type="button">Preview data</button>
+        <button id="generate-btn" class="primary" type="button">Generate plan</button>
+        <span id="plan-status" class="saved"></span>
       </div>
-    </form>
-  </section>
+      <div id="preview-out" class="result"></div>
+    </section>
 
-  <!-- 3 ------------------------------------------------------------------ -->
-  <section class="card" id="plan-card" hidden>
-    <div class="card-head"><h2><span class="step">3</span> Generate the plan</h2></div>
-    <p class="hint">
-      Preview shows exactly what the model will be sent, and costs nothing.
-      Generating calls the model once — filtering afterwards re-runs the SQL only.
-    </p>
-    <div class="actions">
-      <button id="preview-btn" class="ghost" type="button">Preview data</button>
-      <button id="generate-btn" class="primary" type="button">Generate plan</button>
-      <span id="plan-status" class="saved"></span>
-    </div>
-    <div id="preview-out" class="result"></div>
-  </section>
+    <section class="card" id="result-card" hidden>
+      <div class="card-head">
+        <h2><span class="step">3</span> Recommended plan</h2>
+        <a id="pdf-link" class="primary button" href="#" download>Download PDF</a>
+      </div>
+      <div id="plan-out"></div>
+    </section>
+  </div>
 
-  <!-- 4 ------------------------------------------------------------------ -->
-  <section class="card" id="result-card" hidden>
-    <div class="card-head">
-      <h2><span class="step">4</span> Recommended plan</h2>
-      <a id="pdf-link" class="primary button" href="#" download>Download PDF</a>
-    </div>
-    <div id="plan-out"></div>
-  </section>
+  <!-- ==================== DATA ==================== -->
+  <div id="panel-data" class="panel" hidden>
+    <section class="card">
+      <div class="card-head">
+        <h2>Upload data</h2>
+        <button id="refresh-facets" class="ghost" type="button">Refresh</button>
+      </div>
+      <p class="hint">
+        Drop each export into its own slot. Files are parsed in memory and never written to this
+        server's disk; if Drive is configured they are archived there for the run and removed once
+        the PDF is generated — adex is kept, since it builds up month on month.
+      </p>
+      <form id="upload-form">
+        <div id="dataset-slots" class="slots"></div>
+        <button type="submit" class="primary">Upload &amp; parse</button>
+      </form>
+      <div id="upload-result" class="result"></div>
+      <div id="facets" class="facets"></div>
+    </section>
+  </div>
+
+  <!-- ==================== SETTINGS ==================== -->
+  <div id="panel-settings" class="panel" hidden>
+    <section class="card">
+      <div class="card-head"><h2>Google Drive</h2></div>
+      <p class="hint">
+        Adex workbooks are pulled from a Drive folder on a schedule. Uploaded source files are
+        archived to a <strong>Media Planner</strong> folder for the run and removed after the
+        report is generated.
+      </p>
+      <form id="drive-form" class="grid">
+        <label class="span3">Adex folder link
+          <input name="adex_folder" placeholder="https://drive.google.com/drive/folders/…">
+        </label>
+        <label class="span3">Archive folder link <span class="optional">(optional)</span>
+          <input name="archive_folder" placeholder="leave blank to create “Media Planner” automatically">
+        </label>
+        <label class="span3">Service account key (JSON)
+          <textarea name="service_account_json" rows="5"
+                    placeholder='{"type":"service_account","client_email":"…","private_key":"…"}'></textarea>
+        </label>
+        <label class="span3 checkbox">
+          <input type="checkbox" name="archive_enabled" checked>
+          Archive uploaded files to Drive for each run
+        </label>
+        <div class="span3 actions">
+          <button type="submit" class="primary">Save settings</button>
+          <button type="button" id="test-drive" class="ghost">Test connection</button>
+          <span id="settings-saved" class="saved"></span>
+        </div>
+      </form>
+      <div id="settings-out" class="result"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Archived files</h2>
+        <button id="purge-archive" class="ghost" type="button">Purge now</button>
+      </div>
+      <p class="hint">
+        Source files held in Drive for the current run. Adex files are marked kept and are never
+        purged.
+      </p>
+      <div id="archive-out" class="result"></div>
+    </section>
+  </div>
 
 </main>
 

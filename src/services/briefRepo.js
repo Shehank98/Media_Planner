@@ -14,7 +14,7 @@ export async function insertBrief(fields) {
   const { rows } = await pool.query(
     `INSERT INTO campaign_briefs
        (brand, advertiser, objective, target_audience, campaign_period,
-        budget_lkr_lakhs, medium_split, language, territory, source_file)
+        budget_lkr_lakhs, commercial_durations, language, territory, source_file)
      VALUES ($1,$2,$3,$4,$5::tstzrange,$6,$7::jsonb,$8,$9,$10)
      RETURNING *`,
     [
@@ -24,7 +24,7 @@ export async function insertBrief(fields) {
       fields.target_audience ?? null,
       periodRange(fields.period_start, fields.period_end),
       fields.budget_lkr_lakhs ?? null,
-      fields.medium_split ? JSON.stringify(fields.medium_split) : null,
+      JSON.stringify(normaliseDurations(fields.commercial_durations)),
       fields.language ?? null,
       fields.territory ?? null,
       fields.source_file ?? null,
@@ -33,12 +33,31 @@ export async function insertBrief(fields) {
   return hydrate(rows[0]);
 }
 
+/**
+ * The commercial lengths the planner will actually buy.
+ *
+ * A TV plan is built per copy length - a 10s and a 30s of the same brand are
+ * different buys at different rates - so the plan needs the set up front. The
+ * medium-split percentages this replaces never survived contact with how these
+ * plans get made: nobody briefs "70% TV" and then works out the rest.
+ */
+function normaliseDurations(input) {
+  const list = Array.isArray(input) ? input : [];
+  const seconds = list
+    .map((v) => Math.round(Number(v)))
+    .filter((v) => Number.isFinite(v) && v > 0 && v <= 600);
+  const unique = [...new Set(seconds)].sort((a, b) => a - b);
+  // Default to the three lengths that cover most Sri Lankan TV buys, so a
+  // brief that omits them still produces a plan.
+  return unique.length ? unique : [15, 20, 30];
+}
+
 export async function updateBrief(id, fields) {
   const { rows } = await pool.query(
     `UPDATE campaign_briefs SET
        brand = $2, advertiser = $3, objective = $4, target_audience = $5,
        campaign_period = $6::tstzrange, budget_lkr_lakhs = $7,
-       medium_split = $8::jsonb, language = $9, territory = $10
+       commercial_durations = $8::jsonb, language = $9, territory = $10
      WHERE id = $1
      RETURNING *`,
     [
@@ -49,7 +68,7 @@ export async function updateBrief(id, fields) {
       fields.target_audience ?? null,
       periodRange(fields.period_start, fields.period_end),
       fields.budget_lkr_lakhs ?? null,
-      fields.medium_split ? JSON.stringify(fields.medium_split) : null,
+      JSON.stringify(normaliseDurations(fields.commercial_durations)),
       fields.language ?? null,
       fields.territory ?? null,
     ],
@@ -64,7 +83,8 @@ export async function getBrief(id) {
 
 export async function listBriefs(limit = 50) {
   const { rows } = await pool.query(
-    `SELECT id, brand, advertiser, objective, budget_lkr_lakhs, campaign_period, uploaded_at
+    `SELECT id, brand, advertiser, objective, budget_lkr_lakhs, commercial_durations,
+            campaign_period, uploaded_at
        FROM campaign_briefs ORDER BY uploaded_at DESC LIMIT $1`,
     [limit],
   );

@@ -93,8 +93,12 @@ function validateBrief(fields) {
   if (fields.period_start && fields.period_end && fields.period_start > fields.period_end) {
     problems.push('period_start must not be after period_end');
   }
-  if (fields.medium_split != null && typeof fields.medium_split !== 'object') {
-    problems.push('medium_split must be an object, e.g. {"tv":60,"radio":25,"press":15}');
+  if (fields.commercial_durations != null) {
+    if (!Array.isArray(fields.commercial_durations)) {
+      problems.push('commercial_durations must be an array of seconds, e.g. [10, 20, 30]');
+    } else if (fields.commercial_durations.some((v) => !Number.isFinite(Number(v)) || Number(v) <= 0)) {
+      problems.push('commercial_durations must contain positive numbers of seconds');
+    }
   }
   return problems;
 }

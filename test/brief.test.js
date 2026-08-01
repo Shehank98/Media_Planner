@@ -4,7 +4,9 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { parseBriefPdf, parseBudget, parsePeriod, parseMediumSplit } from '../src/parsers/briefParser.js';
+import {
+  parseBriefPdf, parseBudget, parsePeriod, parseCommercialDurations,
+} from '../src/parsers/briefParser.js';
 
 let dir;
 let pdfPath;
@@ -48,8 +50,9 @@ test('brief parser normalises the budget to lakhs', () => {
   assert.equal(parsed.fields.budget_lkr_lakhs, 250);
 });
 
-test('brief parser reads a medium split laid out as a table', () => {
-  assert.deepEqual(parsed.fields.medium_split, { tv: 70, radio: 20, press: 10 });
+test('brief parser reads the commercial lengths', () => {
+  // A TV plan is built per copy length, so these drive the whole buy.
+  assert.deepEqual(parsed.fields.commercial_durations, [10, 20, 30]);
 });
 
 test('brief parser reports which label matched each field', () => {
@@ -80,14 +83,17 @@ test('parsePeriod handles the date range formats seen on briefs', () => {
   assert.deepEqual(parsePeriod('1st April 2024 to 30th June 2024'), { start: '2024-04-01', end: '2024-06-30' });
 });
 
-test('parseMediumSplit flags percentages that do not total 100', () => {
-  const split = parseMediumSplit(['TV 60%', 'Radio 20%', 'Press 5%']);
-  assert.equal(split.tv, 60);
-  assert.match(split._note, /total 85/, 'a short total usually means a missed row');
+test('parseCommercialDurations reads the forms briefs use', () => {
+  assert.deepEqual(parseCommercialDurations(['Commercial length : 30 sec']), [30]);
+  assert.deepEqual(parseCommercialDurations(['TVC 20s and a 10s cutdown']), [10, 20]);
+  assert.deepEqual(parseCommercialDurations(['Copy lengths: 10/15/30']), [10, 15, 30]);
 });
 
-test('parseMediumSplit returns null when the brief states no split', () => {
-  assert.equal(parseMediumSplit(['no percentages here']), null);
+test('parseCommercialDurations does not read percentages or years as lengths', () => {
+  // Once the unit is stripped, "18%" and "2026" are just digits - without a
+  // plausibility bound they both become commercial lengths.
+  assert.deepEqual(parseCommercialDurations(['VAT 18% applies in 2026']), []);
+  assert.deepEqual(parseCommercialDurations(['Budget Rs. 25,00,000 over 60 days']), []);
 });
 
 test('brief parsing saves nothing by itself', () => {
