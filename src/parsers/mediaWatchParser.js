@@ -140,8 +140,20 @@ function buildSpot(record, sourceFile, sheetName) {
     language: LANGUAGES[lang] || str(record.language),
     duration_secs: int(record.duration),
     cost: num(record.cost),
-    source_file: sourceFile ? `${sourceFile}#${sheetName}` : sheetName,
+    source_file: sourceLabel(sourceFile, sheetName),
   };
+}
+
+/**
+ * The per-sheet identity a planner deletes by.
+ *
+ * A workbook sheet is "<file>#<sheet>"; a CSV, whose only "sheet" is the file
+ * itself, is just the file name rather than the "<file>#<file>" doubling.
+ */
+function sourceLabel(sourceFile, sheetName) {
+  if (!sourceFile) return sheetName;
+  if (!sheetName || sheetName === sourceFile) return sourceFile;
+  return `${sourceFile}#${sheetName}`;
 }
 
 /** The date arrives split across Dd / Mn / Yr columns. */

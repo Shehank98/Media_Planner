@@ -7,7 +7,10 @@ import { asyncRoute } from '../util/asyncRoute.js';
 import { parseMicosWorkbook } from '../parsers/micosParser.js';
 import { parseMediaWatch } from '../parsers/mediaWatchParser.js';
 import { parseAdexWorkbook } from '../parsers/adexParser.js';
-import { persistMicos, persistMediaWatch, micosFacets } from '../services/micosRepo.js';
+import {
+  persistMicos, persistMediaWatch, micosFacets,
+  listMediaWatchSources, deleteMediaWatchSource,
+} from '../services/micosRepo.js';
 import { upsertAdexRows, adexFacets } from '../services/adexRepo.js';
 import { archiveUpload, purgeArchive, archiveStatus } from '../services/driveArchive.js';
 import { pushAll } from '../util/arrays.js';
@@ -260,6 +263,29 @@ router.get('/datasets', (_req, res) => {
     })),
   });
 });
+
+/**
+ * The media watch sheets currently loaded.
+ *
+ * Each is a `<file>#<sheet>` source, so a planner who uploads sheets one at a
+ * time can see them listed separately and drop one without touching the others.
+ */
+router.get('/media-watch/sources', asyncRoute(async (_req, res) => {
+  res.json({ sources: await listMediaWatchSources() });
+}));
+
+/** Delete every row belonging to one media watch sheet. */
+router.delete('/media-watch/source', asyncRoute(async (req, res) => {
+  const source = req.query.source || req.body?.source;
+  if (!source) {
+    return res.status(400).json({ error: 'Name the media watch sheet to delete via ?source=...' });
+  }
+  const deleted = await deleteMediaWatchSource(String(source));
+  if (!deleted) {
+    return res.status(404).json({ error: `No media watch sheet named "${source}" is loaded.` });
+  }
+  res.json({ ok: true, source: String(source), deleted });
+}));
 
 /** What data is currently loaded. */
 router.get('/tv/summary', asyncRoute(async (_req, res) => {

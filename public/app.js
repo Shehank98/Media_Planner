@@ -108,7 +108,7 @@ for (const tab of $$('.tab')) {
       panel.hidden = panel.id !== `panel-${tab.dataset.tab}`;
     }
     if (tab.dataset.tab === 'settings') { loadSettings(); loadArchive(); }
-    if (tab.dataset.tab === 'data') loadFacets();
+    if (tab.dataset.tab === 'data') { loadFacets(); loadMediaWatchSources(); }
   });
 }
 
@@ -236,6 +236,7 @@ $('#upload-form').addEventListener('submit', async (e) => {
       out.append(el('div', { class: 'note' }, w));
     }
     await loadFacets();
+    await loadMediaWatchSources();
   } catch (err) {
     showError(out, err);
     if (err.body?.files) {
@@ -252,6 +253,52 @@ $('#upload-form').addEventListener('submit', async (e) => {
     button.textContent = 'Upload & parse';
   }
 });
+
+// --- media watch sheets ----------------------------------------------------
+
+async function loadMediaWatchSources() {
+  const box = $('#mw-sources');
+  try {
+    const { sources } = await api('/api/uploads/media-watch/sources');
+    box.innerHTML = '';
+    if (!sources.length) {
+      box.append(el('div', { class: 'note' }, 'No media watch sheets loaded yet.'));
+      return;
+    }
+    for (const s of sources) {
+      const row = el('div', { class: 'mw-row' },
+        el('div', { class: 'mw-main' },
+          el('span', { class: 'mw-name' }, s.source_file),
+          el('span', { class: 'mw-meta' },
+            `${fmt(s.spots)} spots · ${fmt(s.channels)} channels`
+            + (s.total_cost ? ` · LKR ${fmt(s.total_cost)}` : '')
+            + (s.first_aired ? ` · ${String(s.first_aired).slice(0, 10)} to ${String(s.last_aired).slice(0, 10)}` : ''))),
+        el('button', { class: 'ghost small-btn', type: 'button' }, 'Delete'));
+      row.querySelector('button').addEventListener('click', () => deleteMediaWatchSource(s.source_file, row));
+      box.append(row);
+    }
+  } catch (err) {
+    showError(box, err);
+  }
+}
+
+async function deleteMediaWatchSource(source, row) {
+  if (!window.confirm(`Delete "${source}" and all its rows from the system?`)) return;
+  const btn = row.querySelector('button');
+  btn.disabled = true;
+  btn.textContent = 'Deleting…';
+  try {
+    const r = await api(`/api/uploads/media-watch/source?source=${encodeURIComponent(source)}`, {
+      method: 'DELETE',
+    });
+    row.replaceWith(el('div', { class: 'note ok' }, `Removed ${fmt(r.deleted)} rows from "${source}".`));
+    await loadFacets();
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = 'Delete';
+    showError($('#mw-sources'), err);
+  }
+}
 
 // --- facets ----------------------------------------------------------------
 
@@ -903,8 +950,10 @@ $('#purge-archive').addEventListener('click', async () => {
 });
 
 $('#refresh-facets').addEventListener('click', loadFacets);
+$('#refresh-mw').addEventListener('click', loadMediaWatchSources);
 
 renderDurations();
 loadHealth();
 loadFacets();
+loadMediaWatchSources();
 buildSlots();

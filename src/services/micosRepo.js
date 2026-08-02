@@ -1,4 +1,4 @@
-import { withTransaction } from '../db.js';
+import { pool, withTransaction } from '../db.js';
 import { upsertChannels } from './tvRepo.js';
 
 // ---------------------------------------------------------------------------
@@ -163,6 +163,38 @@ export async function persistMediaWatch(spots) {
     });
     return { spots: upserted };
   });
+}
+
+/**
+ * The media watch sheets currently loaded, one row per source.
+ *
+ * A source is `<file>#<sheet>`, so a workbook with several sheets lists as
+ * several rows - which is what lets a planner load sheets one at a time and drop
+ * a single one without disturbing the rest.
+ */
+export async function listMediaWatchSources() {
+  const { rows } = await pool.query(`
+    SELECT source_file,
+           count(*)::int                       AS spots,
+           count(DISTINCT channel_name)::int   AS channels,
+           min(aired_on)                       AS first_aired,
+           max(aired_on)                       AS last_aired,
+           round(sum(cost)::numeric, 0)        AS total_cost,
+           max(uploaded_at)                    AS uploaded_at
+      FROM media_watch_spots
+     WHERE source_file IS NOT NULL AND source_file <> ''
+     GROUP BY source_file
+     ORDER BY max(uploaded_at) DESC NULLS LAST`);
+  return rows;
+}
+
+/** Delete every row belonging to one media watch source. Returns the count. */
+export async function deleteMediaWatchSource(sourceFile) {
+  const { rowCount } = await pool.query(
+    'DELETE FROM media_watch_spots WHERE source_file = $1',
+    [sourceFile],
+  );
+  return rowCount;
 }
 
 /** What TVR/cost data is currently loaded - drives the UI's filter controls. */

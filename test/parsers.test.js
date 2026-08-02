@@ -219,3 +219,38 @@ test('media watch parser also accepts a workbook', async () => {
   assert.equal(spots.length, 1);
   assert.equal(spots[0].cost, 145000);
 });
+
+test('media watch parser reads the full agency column set', async () => {
+  // Exactly the columns the agency's report exports, in order.
+  const header = ['Product_Group', 'Advertiser', 'Product', 'Advt_Theme', 'Ads', 'Channel',
+    'Program', 'Dd', 'Mn', 'Yr', 'Day', 'Prog_time', 'Advt_time', 'AdPos', 'TotAds', 'BrkNo',
+    'PosinBrk', 'AdsinBrk', 'Lng', 'Dur', 'Cost'].join('\t');
+  const row = ['Beverages', 'Coca Cola Co', 'Coke', 'Summer', '1', 'TV - Hiru', 'Hiru News',
+    '1', '6', '2026', 'Monday', '20:00', '20:05', '2', '8', '3', '1', '4', 'Sin', '30',
+    '150000'].join('\t');
+  const { spots } = await parseMediaWatch(Buffer.from(`${header}\n${row}`), { sourceFile: 'June.csv' });
+
+  assert.equal(spots.length, 1);
+  const s = spots[0];
+  assert.equal(s.channel_name, 'Hiru');
+  assert.equal(s.programme_name, 'Hiru News');
+  assert.equal(s.aired_on, '2026-06-01', 'date assembled from Dd/Mn/Yr');
+  assert.equal(s.advertiser, 'Coca Cola Co');
+  assert.equal(s.product, 'Coke');
+  assert.equal(s.language, 'Sinhala');
+  assert.equal(s.duration_secs, 30);
+  assert.equal(s.cost, 150000);
+  // A CSV's source is just the file, not the "file#file" doubling, so a planner
+  // deletes it by a clean name.
+  assert.equal(s.source_file, 'June.csv');
+});
+
+test('a workbook source is labelled file#sheet, so each sheet is deletable', async () => {
+  const ExcelJS = (await import('exceljs')).default;
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('June');
+  ws.addRow(['Channel', 'Program', 'Dd', 'Mn', 'Yr', 'Advt_time', 'Dur', 'Cost']);
+  ws.addRow(['TV - Hiru', 'Hiru News', 1, 6, 2026, '20:05', 30, 150000]);
+  const { spots } = await parseMediaWatch(await wb.xlsx.writeBuffer(), { sourceFile: 'Watch.xlsx' });
+  assert.equal(spots[0].source_file, 'Watch.xlsx#June');
+});
