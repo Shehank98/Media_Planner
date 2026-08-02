@@ -1,6 +1,7 @@
 import { readWorkbook, sheetToGrid, detectHeader, dataRows, isTotalsRow } from './sheet.js';
 import { str, num, int } from '../util/coerce.js';
 import { canonicalName } from '../util/normalise.js';
+import { pushAll } from '../util/arrays.js';
 
 // ---------------------------------------------------------------------------
 // Media watch spot log parser.
@@ -85,7 +86,7 @@ export async function parseMediaWatch(buffer, { sourceFile = null } = {}) {
       return;
     }
     const rows = build(sheetGrid, header, sourceFile, worksheet.name);
-    spots.push(...rows);
+    pushAll(spots, rows);
     sheets.push({ sheet: worksheet.name, rows: rows.length, headerRow: header.headerRow + 1 });
   });
 

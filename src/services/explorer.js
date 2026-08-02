@@ -30,9 +30,9 @@ import { comparisonKey } from '../util/normalise.js';
 // prorated from at a constant cost per second.
 // ---------------------------------------------------------------------------
 
-const CHANNEL_LIMIT = 8;      // return a few beyond the headline 5 to pick from
+const CHANNEL_LIMIT = 10;     // the planner ranks and picks from the top 10
 const TOP_PROGRAMMES = 5;
-const PROGRAMMES_PER_CHANNEL = 12;
+const PROGRAMMES_PER_CHANNEL = 10;
 const BENCHMARK_SECS = 30;
 
 /**
@@ -48,7 +48,7 @@ export async function analyzeForExplorer(brief, opts = {}) {
   const scope = await resolveCategoryScope(brief, {});
 
   const [channels, competitorByChannel, competitorPatterns, spendByChannel,
-    programmes, costs, pressureByProgramme, adexContext] = await Promise.all([
+    programmes, costs, pressureByProgramme, bestDays, adexContext] = await Promise.all([
     channelPerformance(audience),
     competitorGrpByChannelBrand(audience),
     competitorPatternsByChannel(audience),
@@ -56,6 +56,7 @@ export async function analyzeForExplorer(brief, opts = {}) {
     programmesByChannel(audience),
     costPerSecondByProgramme(),
     competitorPressureByProgramme(audience, brief),
+    bestDayByChannel(audience),
     adexCategoryContext(scope, brief),
   ]);
 
@@ -68,6 +69,7 @@ export async function analyzeForExplorer(brief, opts = {}) {
   const brandsByChannel = groupCompetitorBrands(competitorByChannel);
   const patternsByChannel = new Map(competitorPatterns.map((p) => [p.channel_name, p]));
   const spendIndex = new Map(spendByChannel.map((s) => [comparisonKey(s.channel_name), s]));
+  const bestDayIndex = new Map(bestDays.map((d) => [d.channel_name, d]));
   const programmesByCh = groupProgrammes(programmes, costIndex, pressureIndex);
 
   const totalGrp = [...brandsByChannel.values()].reduce((a, c) => a + c.total_grp, 0) || 1;
@@ -77,6 +79,7 @@ export async function analyzeForExplorer(brief, opts = {}) {
     const grp = brandsByChannel.get(key) || { total_grp: 0, spots: 0, brands: 0, top_brands: [] };
     const patterns = patternsByChannel.get(key) || { top_belts: [], top_days: [] };
     const spend = spendIndex.get(comparisonKey(key));
+    const bestDay = bestDayIndex.get(key);
     return {
       channel_name: key,
       rank: i + 1,
@@ -84,6 +87,9 @@ export async function analyzeForExplorer(brief, opts = {}) {
       share_of_audience: numOrNull(ch.share_of_audience),
       individual_reach_pct: numOrNull(ch.individual_reach_pct),
       total_ratings: numOrNull(ch.total_ratings),
+      best_day: bestDay
+        ? { day: bestDay.day_of_week, ratings: numOrNull(bestDay.ratings), reach_pct: numOrNull(bestDay.reach_pct) }
+        : null,
       competitor: {
         grp_share_pct: +((grp.total_grp / totalGrp) * 100).toFixed(1),
         total_grp: grp.total_grp,
@@ -355,6 +361,24 @@ async function competitorPatternsByChannel(audience) {
     top_belts: topEntries(e.belts, 3).map(([belt, spots]) => ({ belt, spots })),
     top_days: topEntries(e.days, 3).map(([day, spots]) => ({ day, spots })),
   }));
+}
+
+/** The single strongest day of the week for each channel (A2 day data). */
+async function bestDayByChannel(audience) {
+  const { rows } = await pool.query(
+    `SELECT channel_name, day_of_week, ratings, reach_pct FROM (
+       SELECT c.channel_name, d.day_of_week, d.ratings, d.reach_pct,
+              row_number() OVER (PARTITION BY d.channel_id
+                                 ORDER BY d.ratings DESC NULLS LAST) AS rn
+         FROM tv_channel_daypart d
+         JOIN tv_channels c ON c.id = d.channel_id
+        WHERE d.day_of_week <> ''
+          AND ($1::text IS NULL OR d.target_audience = $1)
+     ) ranked
+      WHERE rn = 1`,
+    [audience],
+  );
+  return rows;
 }
 
 /** Observed money into each channel, from the media watch cost log. */

@@ -10,6 +10,7 @@ import { parseAdexWorkbook } from '../parsers/adexParser.js';
 import { persistMicos, persistMediaWatch, micosFacets } from '../services/micosRepo.js';
 import { upsertAdexRows, adexFacets } from '../services/adexRepo.js';
 import { archiveUpload, purgeArchive, archiveStatus } from '../services/driveArchive.js';
+import { pushAll } from '../util/arrays.js';
 import { pool } from '../db.js';
 
 export const router = express.Router();
@@ -149,8 +150,9 @@ router.post('/tv', upload.any(), asyncRoute(async (req, res) => {
       if (result.period) detail.period = result.period;
 
       if (result.kind === 'micos_dashboard') micosParsed.push(result.micos);
-      else if (result.kind === 'media_watch') mediaWatchSpots.push(...result.spots);
-      else if (result.kind === 'adex') adexRows.push(...result.adexRows);
+      // Spread-push would overflow the stack on a large spot log or workbook.
+      else if (result.kind === 'media_watch') pushAll(mediaWatchSpots, result.spots);
+      else if (result.kind === 'adex') pushAll(adexRows, result.adexRows);
 
       // A file dropped in the wrong slot still loads, but say so - silently
       // accepting it is how a planner ends up believing a dataset is present

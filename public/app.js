@@ -23,7 +23,7 @@ const el = (tag, attrs = {}, ...kids) => {
 
 const state = {
   briefId: null, planId: null, durations: [15, 20, 30],
-  analysis: null, picks: [],
+  analysis: null, picks: [], selectedChannels: new Set(),
 };
 
 const DAY_PATTERNS = ['Mon - Fri', 'Sat - Sun', 'Daily', 'Mon - Wed', 'Thu - Sat'];
@@ -133,12 +133,19 @@ async function loadHealth() {
   }
 
   const ok = Boolean(h.ok && h.db?.ok);
+  const pdfReady = Boolean(h.report_worker?.ok);
   box.append(
     el('span', { class: `dot ${ok ? 'ok' : 'bad'}` }),
     h.llm?.model || h.llm?.provider || 'llm unknown',
-    h.report_worker?.ok ? ' · PDF ready' : ' · PDF worker unavailable',
+    pdfReady ? ' · PDF ready' : ' · Excel export (no PDF worker)',
   );
   setBanner(ok ? null : h.db?.error, h.db?.hint);
+
+  // Only offer the PDF when the Python worker is actually installed. On a host
+  // without matplotlib/reportlab the download would 500 and save a JSON error,
+  // so hide it and let the Python-free Excel export be the deliverable.
+  const pdfBtn = $('#pdf-btn');
+  if (pdfBtn) pdfBtn.hidden = !pdfReady;
 }
 
 // --- upload slots ----------------------------------------------------------
@@ -354,10 +361,13 @@ $('#brief-form').addEventListener('submit', async (e) => {
     // A fresh brief starts a fresh exploration.
     state.analysis = null;
     state.picks = [];
+    state.selectedChannels = new Set();
     state.planId = null;
-    $('#picks-card').hidden = true;
+    $('#programmes-card').hidden = true;
     $('#result-card').hidden = true;
+    $('#channels-next').hidden = true;
     $('#explore-out').innerHTML = '';
+    $('#programmes-out').innerHTML = '';
     saved.textContent = `Saved as brief #${brief.id}`;
     $('#explore-card').hidden = false;
     $('#explore-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -367,7 +377,7 @@ $('#brief-form').addEventListener('submit', async (e) => {
   }
 });
 
-// --- explore: analyze ------------------------------------------------------
+// --- step 2: analyze and pick channels -------------------------------------
 
 $('#analyze-btn').addEventListener('click', async () => {
   const status = $('#analyze-status');
@@ -378,10 +388,9 @@ $('#analyze-btn').addEventListener('click', async () => {
   try {
     const r = await api(`/api/explore/${state.briefId}/analyze`);
     state.analysis = r;
-    renderExplorer(r);
+    state.selectedChannels = new Set();
+    renderChannels(r);
     status.textContent = `${r.channels.length} channels · panel: ${r.audience.panel || 'all audiences'}`;
-    $('#picks-card').hidden = false;
-    renderPicks();
   } catch (err) {
     showError($('#explore-out'), err);
     status.className = 'saved err';
@@ -391,47 +400,43 @@ $('#analyze-btn').addEventListener('click', async () => {
   }
 });
 
-/** Top channels, competitor behaviour, and the per-channel programme picker. */
-function renderExplorer(r) {
+/** The ranked channel mix, each with its competitor read and a select box. */
+function renderChannels(r) {
   const out = $('#explore-out');
   out.innerHTML = '';
   for (const note of r.data_notes || []) out.append(el('div', { class: 'note' }, note));
 
-  // Top programmes overall - the quick read before diving per channel.
-  if ((r.top_programmes || []).length) {
-    out.append(el('h3', {}, 'Top programmes for this audience'));
-    out.append(table(
-      ['Channel', 'Programme', 'TVR', 'Avg 30s cost', 'Competitor GRP', 'Competitor spots'],
-      r.top_programmes.map((p) => [
-        p.channel_name, p.programme_name, fmt(p.tvr, 2),
-        p.avg_cost_30s === null ? '-' : `LKR ${fmt(p.avg_cost_30s)}`,
-        fmt(p.competitor?.total_grp, 2), fmt(p.competitor?.spots),
-      ]),
-      [2, 3, 4, 5],
-    ));
-  }
-
-  out.append(el('h3', {}, 'Channels · pick the best programmes under each'));
-  for (const ch of r.channels) {
-    out.append(renderChannelCard(ch));
-  }
+  out.append(el('h3', {}, 'Best channel mix · ranked by share of audience'));
+  for (const ch of r.channels) out.append(renderChannelRow(ch));
+  syncChannelsNext();
 }
 
-function renderChannelCard(ch) {
+function renderChannelRow(ch) {
   const c = ch.competitor || {};
   const card = el('div', { class: `explore-channel${ch.is_top5 ? ' top5' : ''}` });
 
-  card.append(el('div', { class: 'channel-head' },
+  const check = el('input', { type: 'checkbox', class: 'ch-check' });
+  check.checked = state.selectedChannels.has(ch.channel_name);
+  check.addEventListener('change', () => {
+    if (check.checked) state.selectedChannels.add(ch.channel_name);
+    else state.selectedChannels.delete(ch.channel_name);
+    card.classList.toggle('picked', check.checked);
+    syncChannelsNext();
+  });
+  card.classList.toggle('picked', check.checked);
+
+  card.append(el('label', { class: 'channel-head channel-pick' },
+    check,
     el('h4', {}, `#${ch.rank} ${ch.channel_name}`),
     ch.share_of_audience !== null ? el('span', { class: 'chip' }, `${fmt(ch.share_of_audience, 2)}% share`) : null,
     ch.individual_reach_pct !== null ? el('span', { class: 'chip' }, `${fmt(ch.individual_reach_pct, 1)}% reach`) : null,
+    ch.best_day ? el('span', { class: 'chip' }, `best day: ${ch.best_day.day}`) : null,
   ));
 
-  // How competitors behave on this channel.
   const comp = el('div', { class: 'competitor-read' });
   comp.append(el('div', { class: 'cr-row' },
-    el('b', {}, 'Competitors: '),
-    `${fmt(c.grp_share_pct, 1)}% of GRP here · ${fmt(c.spots)} spots · ${fmt(c.brands)} brands`
+    el('b', {}, 'Competitors here: '),
+    `${fmt(c.grp_share_pct, 1)}% of GRP · ${fmt(c.spots)} spots · ${fmt(c.brands)} brands`
     + (c.observed_spend_lkr ? ` · LKR ${fmt(c.observed_spend_lkr)} observed spend` : '')));
   if ((c.top_brands || []).length) {
     comp.append(el('div', { class: 'cr-row' }, el('b', {}, 'Top brands: '),
@@ -446,27 +451,83 @@ function renderChannelCard(ch) {
       c.top_days.map((d) => `${d.day} (${fmt(d.spots)})`).join(' · ')));
   }
   card.append(comp);
-
-  // The programme picker for this channel.
-  const list = el('div', { class: 'programme-picker' });
-  for (const p of ch.programmes || []) {
-    const cp = p.competitor || {};
-    const row = el('div', { class: 'pp-row' },
-      el('div', { class: 'pp-main' },
-        el('span', { class: 'pp-name' }, p.programme_name),
-        el('span', { class: 'pp-meta' },
-          `TVR ${fmt(p.tvr, 2)} · `
-          + (p.avg_cost_30s === null ? 'no cost data' : `30s LKR ${fmt(p.avg_cost_30s)}`)
-          + (cp.spots ? ` · competitor ${fmt(cp.total_grp, 1)} GRP / ${fmt(cp.spots)} spots` : ''))),
-      el('button', {
-        class: 'ghost small-btn', type: 'button',
-        'data-channel': ch.channel_name, 'data-programme': p.programme_name,
-      }, 'Add'));
-    row.querySelector('button').addEventListener('click', () => addPick(ch.channel_name, p));
-    list.append(row);
-  }
-  card.append(list);
   return card;
+}
+
+/** Enable "Next" only once at least one channel is taken. */
+function syncChannelsNext() {
+  const next = $('#channels-next');
+  const n = state.selectedChannels.size;
+  next.hidden = n === 0;
+  next.textContent = `Next: choose programmes (${n} channel${n === 1 ? '' : 's'}) →`;
+}
+
+$('#channels-next').addEventListener('click', () => {
+  renderProgrammes();
+  $('#programmes-card').hidden = false;
+  $('#programmes-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+
+$('#channels-back').addEventListener('click', () => {
+  $('#programmes-card').hidden = true;
+  $('#explore-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+
+// --- step 3: programme basket for the chosen channels ----------------------
+
+/** For each chosen channel: strongest day, top programmes, competitor read. */
+function renderProgrammes() {
+  const out = $('#programmes-out');
+  out.innerHTML = '';
+  const chosen = (state.analysis?.channels || []).filter((ch) => state.selectedChannels.has(ch.channel_name));
+
+  for (const ch of chosen) {
+    const card = el('div', { class: 'explore-channel top5' });
+    card.append(el('div', { class: 'channel-head' },
+      el('h4', {}, ch.channel_name),
+      ch.best_day ? el('span', { class: 'chip' }, `strongest day: ${ch.best_day.day} (${fmt(ch.best_day.ratings, 1)})`) : null,
+      ch.competitor?.grp_share_pct ? el('span', { class: 'chip' }, `competitors ${fmt(ch.competitor.grp_share_pct, 1)}% GRP`) : null,
+    ));
+
+    const list = el('div', { class: 'programme-picker' });
+    for (const p of ch.programmes || []) {
+      const cp = p.competitor || {};
+      const added = state.picks.some((x) => x.channel_name === ch.channel_name && x.programme_name === p.programme_name);
+      const btn = el('button', { class: `ghost small-btn${added ? ' added' : ''}`, type: 'button' }, added ? 'Added' : 'Add');
+      const row = el('div', { class: 'pp-row' },
+        el('div', { class: 'pp-main' },
+          el('span', { class: 'pp-name' }, p.programme_name),
+          el('span', { class: 'pp-meta' },
+            `TVR ${fmt(p.tvr, 2)} · `
+            + (p.avg_cost_30s === null ? 'no 30s cost data' : `30s rate LKR ${fmt(p.avg_cost_30s)}`)
+            + (cp.spots ? ` · competitors ${fmt(cp.total_grp, 1)} GRP / ${fmt(cp.spots)} spots`
+              + (cp.top_brands?.length ? ` (${cp.top_brands.slice(0, 3).join(', ')})` : '') : ' · no competitor spots'))),
+        btn);
+      btn.addEventListener('click', () => { addPick(ch.channel_name, p); });
+      list.append(row);
+    }
+    card.append(list);
+    out.append(card);
+  }
+
+  // Who is already buying the programmes across the chosen channels.
+  const pressure = chosen.flatMap((ch) => (ch.programmes || [])
+    .filter((p) => (p.competitor?.spots || 0) > 0)
+    .map((p) => ({ channel: ch.channel_name, programme: p.programme_name, ...p.competitor })));
+  pressure.sort((a, b) => (b.total_grp || 0) - (a.total_grp || 0));
+  if (pressure.length) {
+    out.append(el('h3', {}, 'Who is already buying these programmes'));
+    out.append(table(
+      ['Channel', 'Programme', 'Competitor GRP', 'Spots', 'Brands', 'Top brands'],
+      pressure.slice(0, 15).map((x) => [
+        x.channel, x.programme, fmt(x.total_grp, 2), fmt(x.spots), fmt(x.brands),
+        (x.top_brands || []).slice(0, 4).join(', '),
+      ]),
+      [2, 3, 4],
+    ));
+  }
+
+  renderPicks();
 }
 
 // --- explore: picks tray ---------------------------------------------------
@@ -486,13 +547,18 @@ function addPick(channelName, programme) {
     spots: 4,
     day_pattern: 'Mon - Fri',
   });
-  renderPicks();
-  $('#picks-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  refreshProgrammeState();
 }
 
 function removePick(i) {
   state.picks.splice(i, 1);
-  renderPicks();
+  refreshProgrammeState();
+}
+
+/** Re-render the programme lists (so "Add" flips to "Added") and the tray. */
+function refreshProgrammeState() {
+  if (!$('#programmes-card').hidden) renderProgrammes();
+  else renderPicks();
 }
 
 /** The editable tray of selected programmes, grouped by channel. */

@@ -242,6 +242,10 @@ h3 { font-size: 13.5px; margin: 18px 0 4px; text-transform: uppercase; letter-sp
   background: #fff;
 }
 .explore-channel.top5 { border-left: 3px solid var(--accent); }
+.explore-channel.picked { border-color: var(--accent); background: #fdf7f3; }
+.channel-pick { cursor: pointer; user-select: none; }
+.channel-pick .ch-check { width: auto; margin-right: 4px; transform: scale(1.15); }
+.small-btn.added { background: #e7f4ec; color: #2f7a4d; border-color: #bfe3cd; }
 .competitor-read {
   background: #f6f8fa; border-radius: 6px; padding: 9px 12px; margin: 8px 0 10px;
   font-size: 12.5px; color: #4a515a;

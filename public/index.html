@@ -57,35 +57,43 @@
     </section>
 
     <section class="card" id="explore-card" hidden>
-      <div class="card-head"><h2><span class="step">2</span> Explore &amp; pick</h2></div>
+      <div class="card-head"><h2><span class="step">2</span> Best channel mix</h2></div>
       <p class="hint">
-        The top channels for your audience, how competitors behave on each, and the programmes you
-        can buy — each with its TVR and average 30-second cost. Add the best programmes under each
-        channel; your picks become the schedule.
+        The top channels for your audience, ranked 1–10, with how competitors behave on each — their
+        share of GRP, the brands buying, favoured days and time belts, and observed spend. Tick the
+        channels you want to take, then move on to programmes.
       </p>
       <div class="actions">
         <button id="analyze-btn" class="primary" type="button">Analyze</button>
+        <button id="channels-next" class="primary" type="button" hidden>Next: choose programmes →</button>
         <span id="analyze-status" class="saved"></span>
       </div>
       <div id="explore-out" class="result"></div>
     </section>
 
-    <section class="card" id="picks-card" hidden>
-      <div class="card-head"><h2><span class="step">3</span> Selected programmes</h2></div>
+    <section class="card" id="programmes-card" hidden>
+      <div class="card-head">
+        <h2><span class="step">3</span> Programme basket</h2>
+        <button id="channels-back" class="ghost" type="button">← Channels</button>
+      </div>
       <p class="hint">
-        Set the copy length, number of spots and day pattern for each pick. Spots are placed on real
-        dates and the clutter across time belts is checked when you build the schedule.
+        For each channel you took: the top 10 programmes with their 30-second rate from media watch
+        and how competitors behave in them. Add the ones you want, then set copy length, spots and
+        day pattern. Your picks are the schedule.
       </p>
+      <div id="programmes-out" class="result"></div>
+
+      <h3>Selected programmes</h3>
       <div id="picks-out"></div>
       <div class="actions">
-        <button id="build-btn" class="primary" type="button">Build schedule</button>
+        <button id="build-btn" class="primary" type="button">Build recommended plan</button>
         <span id="build-status" class="saved"></span>
       </div>
     </section>
 
     <section class="card" id="result-card" hidden>
       <div class="card-head">
-        <h2><span class="step">4</span> Schedule</h2>
+        <h2><span class="step">4</span> Recommended plan</h2>
         <div class="actions">
           <button id="xlsx-btn" class="primary" type="button">Export schedule (Excel)</button>
           <button id="pdf-btn" class="ghost" type="button">Download PDF</button>

@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { num, toDate } from '../util/coerce.js';
+import { pushAll } from '../util/arrays.js';
 
 // ---------------------------------------------------------------------------
 // Campaign brief (PDF) field extraction.
@@ -100,7 +101,7 @@ export async function extractPdfLines(buffer) {
         })
         .filter((line) => line.cells.length);
 
-      lines.push(...pageLines);
+      pushAll(lines, pageLines);
       page.cleanup();
     }
   } finally {
@@ -253,7 +254,7 @@ export async function parseBriefPdf(buffer, { sourceFile = null } = {}) {
     // Enough for someone to tell "the PDF is an image" from "my labels differ"
     // without having to open the file alongside.
     extraction: {
-      pages: lines.length ? Math.max(...lines.map((l) => l.page)) : 0,
+      pages: lines.reduce((mx, l) => (l.page > mx ? l.page : mx), 0),
       text_lines: texts.length,
       word_count: wordCount,
       fields_matched: Object.keys(found).length,

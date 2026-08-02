@@ -1,6 +1,7 @@
 import { readWorkbook, sheetToGrid, detectHeader, dataRows, isTotalsRow } from './sheet.js';
 import { str, num, int, toDate } from '../util/coerce.js';
 import { canonicalName } from '../util/normalise.js';
+import { pushAll } from '../util/arrays.js';
 
 // ---------------------------------------------------------------------------
 // SRL MICOS "TV - Dashboards Report" parser.
@@ -143,7 +144,7 @@ export async function parseMicosWorkbook(buffer, { sourceFile = null } = {}) {
 
     const { spec, header } = match;
     const rows = collect(grid, header, spec, meta, worksheet.name, sourceFile);
-    out[BUCKET[spec.kind]].push(...rows);
+    pushAll(out[BUCKET[spec.kind]], rows);
     out.sheets.push({
       sheet: worksheet.name,
       kind: spec.kind,

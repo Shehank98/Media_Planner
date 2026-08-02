@@ -140,7 +140,7 @@ export async function listAdexFiles({ folderId = null } = {}) {
       includeItemsFromAllDrives: true,
       orderBy: 'modifiedTime desc',
     });
-    files.push(...(res.data.files || []));
+    for (const f of res.data.files || []) files.push(f);
     pageToken = res.data.nextPageToken;
   } while (pageToken);
 
