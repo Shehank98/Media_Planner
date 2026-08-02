@@ -18,7 +18,7 @@ import { observedClutter } from './clutter.js';
 const DEFAULT_PROGRAMME_LIMIT = 20;
 
 /** Audience filter shared by every MICOS query: exact match, else unfiltered. */
-async function resolveAudience(requested) {
+export async function resolveAudience(requested) {
   const { rows } = await pool.query(
     `SELECT DISTINCT target_audience FROM tv_programme_ratings
       WHERE COALESCE(target_audience,'') <> ''`,

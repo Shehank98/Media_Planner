@@ -18,6 +18,7 @@ import { router as syncRouter } from './routes/sync.js';
 import { router as uploadsRouter } from './routes/uploads.js';
 import { router as briefsRouter } from './routes/briefs.js';
 import { router as plansRouter } from './routes/plans.js';
+import { router as exploreRouter } from './routes/explore.js';
 import { router as settingsRouter } from './routes/settings.js';
 
 const app = express();
@@ -88,6 +89,7 @@ app.use('/api/sync', syncRouter);
 app.use('/api/uploads', uploadsRouter);
 app.use('/api/briefs', briefsRouter);
 app.use('/api/plans', plansRouter);
+app.use('/api/explore', exploreRouter);
 app.use('/api/settings', settingsRouter);
 
 app.use((req, res) => res.status(404).json({ error: `No route for ${req.method} ${req.path}` }));

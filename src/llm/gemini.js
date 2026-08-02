@@ -106,3 +106,39 @@ export async function analyze(brief, aggregatedData) {
     },
   };
 }
+
+/**
+ * A focused JSON completion with a caller-supplied instruction.
+ *
+ * Used by the explorer's explain step, where the plan is already built and the
+ * model's only job is narrative - so it gets its own short system instruction
+ * rather than the full planning prompt.
+ */
+export async function complete({ system, user }) {
+  const ai = getClient();
+  const started = Date.now();
+  const model = config.llm.gemini.model;
+
+  let response;
+  try {
+    response = await ai.models.generateContent({
+      model,
+      contents: typeof user === 'string' ? user : JSON.stringify(user),
+      config: {
+        systemInstruction: system,
+        responseMimeType: 'application/json',
+        temperature: config.llm.gemini.temperature,
+        maxOutputTokens: config.llm.gemini.maxOutputTokens,
+        ...(config.llm.gemini.thinkingBudget !== null
+          ? { thinkingConfig: { thinkingBudget: config.llm.gemini.thinkingBudget } }
+          : {}),
+      },
+    });
+  } catch (err) {
+    throw describeLlmError(err, 'gemini');
+  }
+
+  const text = response?.text;
+  if (!text || !String(text).trim()) throw describeEmptyResponse(response, 'gemini', model);
+  return { raw: parseModelJson(text), meta: { model_used: modelId(), elapsed_ms: Date.now() - started } };
+}

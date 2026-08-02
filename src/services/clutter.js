@@ -135,7 +135,9 @@ export function checkPlanClutter(scheduleLines) {
   const beltDay = new Map();
 
   for (const line of lines) {
-    const belt = line.time_belt || beltForTime(line.time_start) || 'Unspecified';
+    // Schedule lines carry the belt as `time_band`; synthetic lines and older
+    // callers use `time_belt`. Accept either, then fall back to the start time.
+    const belt = line.time_belt || line.time_band || beltForTime(line.time_start) || 'Unspecified';
     beltTotals.set(belt, (beltTotals.get(belt) || 0) + (line.spots || 0));
 
     if (!beltDay.has(belt)) beltDay.set(belt, new Map());

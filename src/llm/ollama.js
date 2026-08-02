@@ -110,6 +110,61 @@ export async function analyze(brief, aggregatedData) {
   };
 }
 
+/**
+ * A focused JSON completion with a caller-supplied instruction, mirroring the
+ * Gemini adapter so the explorer's explain step is provider-agnostic.
+ */
+export async function complete({ system, user }) {
+  const { baseUrl, model, numCtx, temperature, timeoutMs } = config.llm.ollama;
+  const started = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  let response;
+  try {
+    response = await fetch(`${baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        stream: false,
+        format: 'json',
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: typeof user === 'string' ? user : JSON.stringify(user) },
+        ],
+        options: { temperature, num_ctx: numCtx },
+      }),
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new LlmError(`Ollama did not respond within ${timeoutMs}ms at ${baseUrl}.`, {
+        hint: 'CPU-only inference is slow. Raise OLLAMA_TIMEOUT_MS.', status: 504, provider: 'ollama', cause: err,
+      });
+    }
+    throw new LlmError(`Could not reach Ollama at ${baseUrl}: ${err.message}`, {
+      status: 503, provider: 'ollama', cause: err,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new LlmError(`Ollama returned ${response.status}: ${body.slice(0, 300)}`, {
+      status: 502, provider: 'ollama',
+    });
+  }
+
+  const payload = await response.json();
+  const content = payload.message?.content;
+  if (!content || !String(content).trim()) {
+    throw new LlmError(`${model} returned an empty response.`, { status: 502, provider: 'ollama' });
+  }
+  return { raw: parseModelJson(content), meta: { model_used: modelId(), elapsed_ms: Date.now() - started } };
+}
+
 /** Confirm the tunnel is up and the configured model is actually pulled. */
 export async function healthCheck() {
   const { baseUrl, model } = config.llm.ollama;

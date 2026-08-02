@@ -21,7 +21,12 @@ const el = (tag, attrs = {}, ...kids) => {
   return node;
 };
 
-const state = { briefId: null, planId: null, durations: [15, 20, 30] };
+const state = {
+  briefId: null, planId: null, durations: [15, 20, 30],
+  analysis: null, picks: [],
+};
+
+const DAY_PATTERNS = ['Mon - Fri', 'Sat - Sun', 'Daily', 'Mon - Wed', 'Thu - Sat'];
 
 const fmt = (n, dp = 0) =>
   n === null || n === undefined || n === '' || Number.isNaN(Number(n))
@@ -346,106 +351,212 @@ $('#brief-form').addEventListener('submit', async (e) => {
       body: JSON.stringify(payload),
     });
     state.briefId = brief.id;
+    // A fresh brief starts a fresh exploration.
+    state.analysis = null;
+    state.picks = [];
+    state.planId = null;
+    $('#picks-card').hidden = true;
+    $('#result-card').hidden = true;
+    $('#explore-out').innerHTML = '';
     saved.textContent = `Saved as brief #${brief.id}`;
-    $('#plan-card').hidden = false;
-    $('#plan-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    $('#explore-card').hidden = false;
+    $('#explore-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   } catch (err) {
     saved.className = 'saved err';
     saved.textContent = err.hint ? `${err.message} ${err.hint}` : err.message;
   }
 });
 
-// --- preview ---------------------------------------------------------------
+// --- explore: analyze ------------------------------------------------------
 
-$('#preview-btn').addEventListener('click', async () => {
-  const out = $('#preview-out');
-  out.innerHTML = 'Loading…';
+$('#analyze-btn').addEventListener('click', async () => {
+  const status = $('#analyze-status');
+  const button = $('#analyze-btn');
+  button.disabled = true;
+  status.className = 'saved';
+  status.textContent = 'Reading the audience, channels and competitor activity…';
   try {
-    const r = await api(`/api/plans/preview/${state.briefId}`);
-    const d = r.aggregated;
-    out.innerHTML = '';
-    for (const note of d.data_notes || []) out.append(el('div', { class: 'note' }, note));
-
-    out.append(el('h3', {}, 'Channels for this panel'));
-    out.append(table(
-      ['Channel', 'Share of audience', 'Reach %', 'Total ratings'],
-      (d.channel_performance || []).slice(0, 8).map((c) => [
-        c.channel_name, fmt(c.share_of_audience, 2), fmt(c.individual_reach_pct, 1),
-        fmt(c.total_ratings),
-      ]),
-      [1, 2, 3],
-    ));
-
-    out.append(el('h3', {}, 'Top programmes'));
-    out.append(table(
-      ['Channel', 'Programme', 'Rating', 'Airings', 'Avg cost', 'Cost/point'],
-      (d.programme_ratings || []).slice(0, 10).map((p) => [
-        p.channel_name, p.programme_name, fmt(p.avg_rating, 2), fmt(p.instances),
-        fmt(p.observed_avg_cost), fmt(p.cost_per_rating_point),
-      ]),
-      [2, 3, 4, 5],
-    ));
-
-    const bestDays = (d.best_days || []).filter((x) => x.day_rank === 1);
-    if (bestDays.length) {
-      out.append(el('h3', {}, 'Strongest day per channel'));
-      out.append(table(['Channel', 'Best day', 'Ratings', 'Reach %'],
-        bestDays.slice(0, 8).map((x) => [x.channel_name, x.day_of_week, fmt(x.ratings), fmt(x.reach_pct, 1)]),
-        [2, 3]));
-    }
-
-    if ((d.time_belt_clutter || []).length) {
-      out.append(el('h3', {}, 'How crowded each time belt already is'));
-      out.append(table(
-        ['Time belt', 'Competitor spots', 'Share', 'Busiest channels'],
-        d.time_belt_clutter.slice(0, 9).map((b) => [
-          b.time_belt, fmt(b.competitor_spots), `${fmt(b.share_of_competitor_spots_pct, 1)}%`,
-          (b.busiest_channels || []).map((c) => `${c.channel} (${c.spots})`).join(', '),
-        ]),
-        [1, 2],
-      ));
-    }
-
-    if ((d.competitor_spot_pressure || []).length) {
-      out.append(el('h3', {}, 'Who is already buying these programmes'));
-      out.append(table(
-        ['Channel', 'Programme', 'Spots', 'Total GRP', 'Brands'],
-        d.competitor_spot_pressure.slice(0, 8).map((x) => [
-          x.channel_name, x.programme_name, fmt(x.spots), fmt(x.total_grp, 2),
-          (x.top_brands || []).slice(0, 4).join(', '),
-        ]),
-        [2, 3],
-      ));
-    }
+    const r = await api(`/api/explore/${state.briefId}/analyze`);
+    state.analysis = r;
+    renderExplorer(r);
+    status.textContent = `${r.channels.length} channels · panel: ${r.audience.panel || 'all audiences'}`;
+    $('#picks-card').hidden = false;
+    renderPicks();
   } catch (err) {
-    showError(out, err);
+    showError($('#explore-out'), err);
+    status.className = 'saved err';
+    status.textContent = 'Could not analyze.';
+  } finally {
+    button.disabled = false;
   }
 });
 
-// --- generate --------------------------------------------------------------
+/** Top channels, competitor behaviour, and the per-channel programme picker. */
+function renderExplorer(r) {
+  const out = $('#explore-out');
+  out.innerHTML = '';
+  for (const note of r.data_notes || []) out.append(el('div', { class: 'note' }, note));
 
-$('#generate-btn').addEventListener('click', async () => {
-  const status = $('#plan-status');
-  const button = $('#generate-btn');
+  // Top programmes overall - the quick read before diving per channel.
+  if ((r.top_programmes || []).length) {
+    out.append(el('h3', {}, 'Top programmes for this audience'));
+    out.append(table(
+      ['Channel', 'Programme', 'TVR', 'Avg 30s cost', 'Competitor GRP', 'Competitor spots'],
+      r.top_programmes.map((p) => [
+        p.channel_name, p.programme_name, fmt(p.tvr, 2),
+        p.avg_cost_30s === null ? '-' : `LKR ${fmt(p.avg_cost_30s)}`,
+        fmt(p.competitor?.total_grp, 2), fmt(p.competitor?.spots),
+      ]),
+      [2, 3, 4, 5],
+    ));
+  }
+
+  out.append(el('h3', {}, 'Channels · pick the best programmes under each'));
+  for (const ch of r.channels) {
+    out.append(renderChannelCard(ch));
+  }
+}
+
+function renderChannelCard(ch) {
+  const c = ch.competitor || {};
+  const card = el('div', { class: `explore-channel${ch.is_top5 ? ' top5' : ''}` });
+
+  card.append(el('div', { class: 'channel-head' },
+    el('h4', {}, `#${ch.rank} ${ch.channel_name}`),
+    ch.share_of_audience !== null ? el('span', { class: 'chip' }, `${fmt(ch.share_of_audience, 2)}% share`) : null,
+    ch.individual_reach_pct !== null ? el('span', { class: 'chip' }, `${fmt(ch.individual_reach_pct, 1)}% reach`) : null,
+  ));
+
+  // How competitors behave on this channel.
+  const comp = el('div', { class: 'competitor-read' });
+  comp.append(el('div', { class: 'cr-row' },
+    el('b', {}, 'Competitors: '),
+    `${fmt(c.grp_share_pct, 1)}% of GRP here · ${fmt(c.spots)} spots · ${fmt(c.brands)} brands`
+    + (c.observed_spend_lkr ? ` · LKR ${fmt(c.observed_spend_lkr)} observed spend` : '')));
+  if ((c.top_brands || []).length) {
+    comp.append(el('div', { class: 'cr-row' }, el('b', {}, 'Top brands: '),
+      c.top_brands.map((b) => `${b.brand} (${fmt(b.grp, 1)} GRP)`).join(', ')));
+  }
+  if ((c.top_belts || []).length) {
+    comp.append(el('div', { class: 'cr-row' }, el('b', {}, 'Favoured belts: '),
+      c.top_belts.map((b) => `${b.belt} (${fmt(b.spots)})`).join(' · ')));
+  }
+  if ((c.top_days || []).length) {
+    comp.append(el('div', { class: 'cr-row' }, el('b', {}, 'Favoured days: '),
+      c.top_days.map((d) => `${d.day} (${fmt(d.spots)})`).join(' · ')));
+  }
+  card.append(comp);
+
+  // The programme picker for this channel.
+  const list = el('div', { class: 'programme-picker' });
+  for (const p of ch.programmes || []) {
+    const cp = p.competitor || {};
+    const row = el('div', { class: 'pp-row' },
+      el('div', { class: 'pp-main' },
+        el('span', { class: 'pp-name' }, p.programme_name),
+        el('span', { class: 'pp-meta' },
+          `TVR ${fmt(p.tvr, 2)} · `
+          + (p.avg_cost_30s === null ? 'no cost data' : `30s LKR ${fmt(p.avg_cost_30s)}`)
+          + (cp.spots ? ` · competitor ${fmt(cp.total_grp, 1)} GRP / ${fmt(cp.spots)} spots` : ''))),
+      el('button', {
+        class: 'ghost small-btn', type: 'button',
+        'data-channel': ch.channel_name, 'data-programme': p.programme_name,
+      }, 'Add'));
+    row.querySelector('button').addEventListener('click', () => addPick(ch.channel_name, p));
+    list.append(row);
+  }
+  card.append(list);
+  return card;
+}
+
+// --- explore: picks tray ---------------------------------------------------
+
+function addPick(channelName, programme) {
+  const exists = state.picks.some(
+    (p) => p.channel_name === channelName && p.programme_name === programme.programme_name,
+  );
+  if (exists) return;
+  state.picks.push({
+    channel_name: channelName,
+    programme_name: programme.programme_name,
+    tvr: programme.tvr,
+    avg_cost_30s: programme.avg_cost_30s,
+    cost_per_sec: programme.cost_per_sec,
+    duration_secs: state.durations[state.durations.length - 1] || 30,
+    spots: 4,
+    day_pattern: 'Mon - Fri',
+  });
+  renderPicks();
+  $('#picks-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function removePick(i) {
+  state.picks.splice(i, 1);
+  renderPicks();
+}
+
+/** The editable tray of selected programmes, grouped by channel. */
+function renderPicks() {
+  const out = $('#picks-out');
+  out.innerHTML = '';
+  if (!state.picks.length) {
+    out.append(el('div', { class: 'note' }, 'No programmes picked yet. Add programmes from the channels above.'));
+    $('#build-btn').disabled = true;
+    return;
+  }
+  $('#build-btn').disabled = false;
+
+  const head = ['Channel', 'Programme', 'TVR', 'Length', 'Spots', 'Day pattern', 'Est. cost', ''];
+  const rows = state.picks.map((pick, i) => {
+    const perSec = pick.cost_per_sec;
+    const lenSelect = el('select', { class: 'pick-input' },
+      ...state.durations.map((d) => el('option', { value: d, ...(d === pick.duration_secs ? { selected: 'selected' } : {}) }, `${d}s`)));
+    lenSelect.addEventListener('change', () => { pick.duration_secs = Number(lenSelect.value); renderPicks(); });
+
+    const spotsInput = el('input', { class: 'pick-input', type: 'number', min: '0', max: '200', value: pick.spots });
+    spotsInput.addEventListener('change', () => { pick.spots = Math.max(0, Math.round(Number(spotsInput.value) || 0)); renderPicks(); });
+
+    const daySelect = el('select', { class: 'pick-input' },
+      ...DAY_PATTERNS.map((d) => el('option', { value: d, ...(d === pick.day_pattern ? { selected: 'selected' } : {}) }, d)));
+    daySelect.addEventListener('change', () => { pick.day_pattern = daySelect.value; });
+
+    const est = perSec !== null && perSec !== undefined
+      ? `LKR ${fmt(Math.round(perSec * pick.duration_secs * pick.spots))}` : '-';
+
+    const remove = el('button', { class: 'ghost small-btn', type: 'button' }, 'Remove');
+    remove.addEventListener('click', () => removePick(i));
+
+    return [pick.channel_name, pick.programme_name, fmt(pick.tvr, 2), lenSelect, spotsInput, daySelect, est, remove];
+  });
+  out.append(table(head, rows, [2, 4, 6]));
+}
+
+// --- explore: build schedule -----------------------------------------------
+
+$('#build-btn').addEventListener('click', async () => {
+  const status = $('#build-status');
+  const button = $('#build-btn');
+  if (!state.picks.length) return;
   button.disabled = true;
   status.className = 'saved';
-  status.textContent = 'Calling the model — this can take a while on CPU…';
-
+  status.textContent = 'Placing spots on dates, costing and checking clutter…';
   try {
-    const r = await api(`/api/plans/generate/${state.briefId}`, {
+    const r = await api(`/api/explore/${state.briefId}/schedule`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: '{}',
+      body: JSON.stringify({ picks: state.picks, channels: state.analysis?.channels || [] }),
     });
     state.planId = r.plan_id;
-    status.textContent = `Plan #${r.plan_id} generated in ${(r.meta.elapsed_ms / 1000).toFixed(1)}s`;
-    renderPlan(r);
+    status.textContent = `Schedule #${r.plan_id} · ${fmt(r.schedule_totals?.total_spots)} spots`;
+    renderSchedule(r);
     $('#result-card').hidden = false;
     $('#download-out').innerHTML = '';
     $('#result-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (err) {
+    showError($('#plan-out'), err);
+    $('#result-card').hidden = false;
     status.className = 'saved err';
-    status.textContent = err.hint ? `${err.message} ${err.hint}` : err.message;
+    status.textContent = 'Could not build the schedule.';
   } finally {
     button.disabled = false;
   }
@@ -502,13 +613,15 @@ $('#xlsx-btn').addEventListener('click', () =>
 $('#pdf-btn').addEventListener('click', () =>
   downloadFile(`/api/plans/${state.planId}/report.pdf`, 'the PDF'));
 
-function renderPlan(r) {
+/** The built schedule: dated grid, clutter read, and the model's explanation. */
+function renderSchedule(r) {
   const out = $('#plan-out');
   out.innerHTML = '';
+  const ex = r.explanation || {};
 
   out.append(el('div', { class: 'actions' },
     el('span', { class: `badge ${r.confidence}` }, `confidence: ${r.confidence}`),
-    el('span', { class: 'chip' }, r.meta.model_used)));
+    el('span', { class: 'chip' }, ex.source === 'model' ? (ex.model_used || 'model') : 'deterministic explanation')));
 
   const b = r.budget || {};
   if (b.budget_lakhs !== null && b.budget_lakhs !== undefined) {
@@ -519,48 +632,23 @@ function renderPlan(r) {
       b.uncosted_spots ? ` · ${fmt(b.uncosted_spots)} uncosted` : ''));
   }
 
-  // Channel first, programmes beneath - the order a planner actually works in.
-  for (const channel of r.channel_plan || []) {
-    const head = el('div', { class: 'channel-head' },
-      el('h3', {}, channel.channel),
-      channel.share_of_audience
-        ? el('span', { class: 'chip' }, `${fmt(channel.share_of_audience, 2)}% share`)
-        : null);
-    out.append(head);
-    if (channel.why_this_channel) {
-      out.append(el('div', { class: 'prose small-prose' }, channel.why_this_channel));
+  // The strategic explanation.
+  if (ex.overall_rationale) {
+    out.append(el('h3', {}, 'Why this schedule'));
+    out.append(el('div', { class: 'prose' }, ex.overall_rationale));
+  }
+  if ((ex.per_channel || []).length) {
+    out.append(el('h3', {}, 'By channel'));
+    for (const pc of ex.per_channel) {
+      out.append(el('div', { class: 'prose small-prose' }, el('b', {}, `${pc.channel_name}: `), pc.note));
     }
-    out.append(table(
-      ['Programme', 'Day', 'Time band', 'Dur', 'Spots', 'TVR', 'Rate', 'Why'],
-      (channel.programmes || []).map((p) => [
-        p.in_source_data === false
-          ? el('span', {}, p.programme, el('span', { class: 'flag' }, ' †'))
-          : p.programme,
-        p.day_pattern || '-',
-        p.time_band || '-',
-        p.duration_secs ? `${p.duration_secs}s` : '-',
-        p.spots ?? '-',
-        fmt(p.tvr, 2),
-        p.rate_supported === false
-          ? el('span', { class: 'flag' }, `${fmt(p.rate_lkr)} ‡`)
-          : fmt(p.rate_lkr),
-        p.rationale,
-      ]),
-      [3, 4, 5, 6],
-    ));
+  }
+  if (ex.competitor_analysis) {
+    out.append(el('h3', {}, 'Against competitors'));
+    out.append(el('div', { class: 'prose' }, ex.competitor_analysis));
   }
 
-  const g = r.grounding || {};
-  if (g.unmatched?.length) {
-    out.append(el('div', { class: 'note' },
-      `† ${g.unmatched.length} entry/entries could not be matched to the loaded data: ${g.unmatched.join('; ')}`));
-  }
-  if (g.unsupported_rates?.length) {
-    out.append(el('div', { class: 'note' },
-      `‡ ${g.unsupported_rates.length} rate(s) have no observed spot cost behind them.`));
-  }
-
-  // Clutter: the measured spread, not just what the rationale claims.
+  // Clutter: the measured spread across time belts.
   const c = r.clutter || {};
   if (c.by_belt?.length) {
     out.append(el('h3', {}, 'Time-belt spread'));
@@ -570,44 +658,38 @@ function renderPlan(r) {
       [1, 2],
     ));
     if (c.issues?.length) {
-      for (const issue of c.issues) {
-        out.append(el('div', { class: 'note' }, issue.detail));
-      }
+      for (const issue of c.issues) out.append(el('div', { class: 'note' }, issue.detail));
     } else {
-      out.append(el('div', { class: 'note ok' },
-        'No belt carries an unreasonable share of the buy.'));
+      out.append(el('div', { class: 'note ok' }, 'No belt carries an unreasonable share of the buy.'));
     }
   }
-  if (r.clutter_strategy) {
-    out.append(el('h3', {}, 'How the buy is spread'));
-    out.append(el('div', { class: 'prose' }, r.clutter_strategy));
+  if (ex.clutter_strategy) {
+    out.append(el('div', { class: 'prose' }, ex.clutter_strategy));
   }
 
-  // Schedule grid.
+  // The dated schedule grid.
   if (r.schedule?.length) {
-    const dates = [...new Set(r.schedule.flatMap((l) => Object.keys(l.spot_dates || {})))].sort();
+    const dates = (r.dates && r.dates.length)
+      ? r.dates
+      : [...new Set(r.schedule.flatMap((l) => Object.keys(l.spot_dates || {})))].sort();
     out.append(el('h3', {}, `Schedule · ${fmt(r.schedule_totals?.total_spots)} spots`));
     out.append(table(
-      ['Channel', 'Programme', 'Day', 'Dur', 'Spots', ...dates.map((d) => d.slice(5))],
+      ['Channel', 'Programme', 'Day', 'Time', 'Dur', 'TVR', 'Spots', 'Cost', ...dates.map((d) => d.slice(5))],
       r.schedule.map((l) => [
         l.channel_name, l.programme_name, l.day_pattern || '-',
-        l.duration_secs ? `${l.duration_secs}s` : '-', l.spots,
+        l.time_band || '-', l.duration_secs ? `${l.duration_secs}s` : '-',
+        fmt(l.tvr, 2), l.spots,
+        l.cost_lkr === null || l.cost_lkr === undefined ? '-' : fmt(l.cost_lkr),
         ...dates.map((d) => (l.spot_dates || {})[d] || ''),
       ]),
-      [3, 4, ...dates.map((_, i) => i + 5)],
+      [4, 5, 6, 7, ...dates.map((_, i) => i + 8)],
     ));
   }
 
-  out.append(el('h3', {}, 'Rationale'));
-  out.append(el('div', { class: 'prose' }, r.overall_rationale || '-'));
-  out.append(el('h3', {}, 'Competitor analysis'));
-  out.append(el('div', { class: 'prose' }, r.competitor_analysis || '-'));
-  if (r.budget_fit) {
-    out.append(el('h3', {}, 'Budget fit'));
-    out.append(el('div', { class: 'prose' }, r.budget_fit));
+  if ((r.warnings || []).length) {
+    out.append(el('h3', {}, 'Notes'));
+    for (const w of r.warnings) out.append(el('div', { class: 'note' }, w));
   }
-  out.append(el('h3', {}, 'Gaps & caveats'));
-  out.append(el('div', { class: 'prose' }, r.gaps_or_caveats || 'None reported.'));
 }
 
 // --- settings --------------------------------------------------------------

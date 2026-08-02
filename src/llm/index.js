@@ -124,4 +124,108 @@ export async function analyzeAndRecommend(brief, aggregatedData, opts = {}) {
   return { ...result, meta };
 }
 
+// ---------------------------------------------------------------------------
+// Explain a schedule the planner built by hand in the explorer.
+//
+// The plan is already fixed and costed here, so the model does not choose
+// anything - it narrates strategy over numbers it is handed. If no provider is
+// configured or the call fails, a deterministic explanation is produced from
+// the same numbers, so the explorer never depends on a model being reachable.
+// ---------------------------------------------------------------------------
+
+const EXPLAIN_PROMPT = `You are a Sri Lankan TV media planner explaining a schedule a colleague has already built and costed. You are NOT allowed to add, drop, or re-cost any line - only explain what is there.
+
+You receive JSON: the brief, the schedule (channel -> programmes with day pattern, time band, duration, spots, TVR, rate, cost), the totals and budget fit, the automated clutter check, and how competitors behave on each channel.
+
+Return ONLY a JSON object:
+{
+  "overall_rationale": "2-4 sentences: why this channel and programme mix suits the brief's audience, objective and budget.",
+  "competitor_analysis": "2-3 sentences on how this buy sits against competitor GRP and spend on these channels.",
+  "clutter_strategy": "1-2 sentences: if the clutter check flagged an issue, how to spread or re-time; if clean, say the spread is within limits.",
+  "per_channel": [ { "channel_name": "...", "note": "one sentence on this channel's role in the plan" } ]
+}
+Ground every statement in the numbers supplied. Do not invent programmes, rates, or audiences.`;
+
+export async function explainSchedule({ brief, schedule, totals, budget, clutter, channels = [] }, opts = {}) {
+  const provider = opts.provider || config.llm.provider;
+  const payload = {
+    brief: {
+      brand: brief?.brand, objective: brief?.objective,
+      target_audience: brief?.target_audience, budget_lkr_lakhs: brief?.budget_lkr_lakhs,
+      commercial_durations: brief?.commercial_durations,
+    },
+    schedule: (schedule || []).map((l) => ({
+      channel: l.channel_name, programme: l.programme_name, day_pattern: l.day_pattern,
+      time_band: l.time_band, duration_secs: l.duration_secs, spots: l.spots,
+      tvr: l.tvr, rate_lkr: l.rate_lkr, cost_lkr: l.cost_lkr,
+    })),
+    totals, budget,
+    clutter: { ok: clutter?.ok, issues: (clutter?.issues || []).map((i) => i.detail) },
+    competitor_behaviour: channels,
+  };
+
+  try {
+    const adapter = getAdapter(provider);
+    if (typeof adapter.complete !== 'function') throw new Error('provider has no complete()');
+    const { raw, meta } = await adapter.complete({ system: EXPLAIN_PROMPT, user: payload });
+    return {
+      overall_rationale: str(raw.overall_rationale),
+      competitor_analysis: str(raw.competitor_analysis),
+      clutter_strategy: str(raw.clutter_strategy),
+      per_channel: Array.isArray(raw.per_channel)
+        ? raw.per_channel.map((p) => ({ channel_name: str(p.channel_name), note: str(p.note) }))
+          .filter((p) => p.channel_name)
+        : [],
+      model_used: meta?.model_used || null,
+      source: 'model',
+    };
+  } catch (err) {
+    log.warn('explainSchedule fell back to deterministic text', { provider, reason: err.message });
+    return { ...deterministicExplanation(payload), source: 'fallback' };
+  }
+}
+
+function deterministicExplanation({ brief, schedule, totals, budget, clutter, competitor_behaviour }) {
+  const channelNames = [...new Set(schedule.map((l) => l.channel))];
+  const spend = budget?.total_cost_lakhs;
+  const util = budget?.utilisation_pct;
+  const overall = [
+    `${channelNames.length} channel${channelNames.length === 1 ? '' : 's'} `
+    + `(${channelNames.join(', ')}) carry ${totals?.total_spots ?? 0} spots`
+    + (spend ? ` at LKR ${spend} lakhs` : '')
+    + (util ? ` (${util}% of budget)` : '') + '.',
+    brief.target_audience ? `Selected against the ${brief.target_audience} audience.` : '',
+    brief.objective ? `Objective: ${brief.objective}.` : '',
+  ].filter(Boolean).join(' ');
+
+  const clutterStrategy = clutter?.ok
+    ? 'The buy is spread within the clutter limits: no single time belt is over-loaded.'
+    : `Clutter check flagged: ${(clutter?.issues || []).join(' ')} Re-time or thin the affected belt.`;
+
+  const perChannel = channelNames.map((name) => {
+    const lines = schedule.filter((l) => l.channel === name);
+    const spots = lines.reduce((a, l) => a + (l.spots || 0), 0);
+    const comp = (competitor_behaviour || []).find((c) => c.channel_name === name);
+    const share = comp?.share_of_audience;
+    return {
+      channel_name: name,
+      note: `${lines.length} programme line${lines.length === 1 ? '' : 's'}, ${spots} spots`
+        + (share ? `; ${share}% share of audience` : '')
+        + (comp?.competitor?.grp_share_pct ? `, competitors hold ${comp.competitor.grp_share_pct}% of GRP here` : '')
+        + '.',
+    };
+  });
+
+  return {
+    overall_rationale: overall,
+    competitor_analysis: 'Competitor GRP and spend by channel are shown alongside each line; '
+      + 'this buy is placed on the channels carrying the target audience.',
+    clutter_strategy: clutterStrategy,
+    per_channel: perChannel,
+    model_used: null,
+  };
+}
+
+const str = (v) => (v === null || v === undefined ? '' : String(v).trim());
+
 export { SYSTEM_PROMPT } from './systemPrompt.js';

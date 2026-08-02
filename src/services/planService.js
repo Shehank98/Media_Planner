@@ -116,7 +116,7 @@ function campaignDays(brief) {
 }
 
 /** Replace the stored schedule for a plan. */
-async function saveSchedule(planId, lines) {
+export async function saveSchedule(planId, lines) {
   await pool.query('DELETE FROM plan_schedule WHERE plan_id = $1', [planId]);
   if (!lines?.length) return;
 

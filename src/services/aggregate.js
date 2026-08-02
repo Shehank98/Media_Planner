@@ -110,7 +110,7 @@ function anchorWindow(anchorMonth, quarters) {
 }
 const iso = (d) => d.toISOString().slice(0, 10);
 /** Find the brand's category/sector from adex so competitors can be scoped. */
-async function resolveCategoryScope(brief, filters) {
+export async function resolveCategoryScope(brief, filters) {
   if (filters.category || filters.sector) {
     return { category: filters.category || null, sector: filters.sector || null };
   }
