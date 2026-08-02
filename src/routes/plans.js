@@ -7,6 +7,7 @@ import { purgeArchive } from '../services/driveArchive.js';
 import { buildAggregatedData } from '../services/aggregate.js';
 import { getBrief } from '../services/briefRepo.js';
 import { generateReport } from '../services/reportService.js';
+import { buildScheduleWorkbook } from '../services/scheduleExcel.js';
 
 export const router = express.Router();
 
@@ -92,6 +93,34 @@ router.get('/:id/schedule', asyncRoute(async (req, res) => {
   // Column headers for the date grid, in order.
   const dates = [...new Set(lines.flatMap((l) => Object.keys(l.spot_dates || {})))].sort();
   res.json({ plan_id: planId, dates, lines });
+}));
+
+/**
+ * Export the schedule as an .xlsx in the agency recon-schedule layout.
+ *
+ * Pure Node, so it works without the Python report worker - the reliable export
+ * path when the PDF worker is unavailable.
+ */
+router.get('/:id/schedule.xlsx', asyncRoute(async (req, res) => {
+  const planId = Number(req.params.id);
+  const plan = await getPlan(planId);
+  if (!plan) return res.status(404).json({ error: 'Plan not found' });
+
+  const [lines, brief] = await Promise.all([getSchedule(planId), getBrief(plan.brief_id)]);
+  const stored = plan.chart_data || {};
+  const buffer = await buildScheduleWorkbook({
+    brief: brief || {},
+    schedule: lines,
+    totals: stored.schedule_totals || {},
+    plan: { budget_fit: stored.budget_fit, confidence: plan.confidence },
+  });
+
+  const slug = (brief?.brand || 'media-plan').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '') || 'media-plan';
+  res.setHeader('Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${slug}-schedule-${planId}.xlsx"`);
+  res.send(Buffer.from(buffer));
 }));
 
 /**

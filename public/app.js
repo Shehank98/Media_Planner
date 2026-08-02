@@ -311,45 +311,6 @@ $('#add-duration').addEventListener('click', () => {
   renderDurations();
 });
 
-// --- brief parse -----------------------------------------------------------
-
-$('#brief-upload-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const input = $('#brief-file');
-  const out = $('#brief-warnings');
-  if (!input.files.length) return notes(out, ['Choose a brief PDF first.'], 'note err');
-
-  const body = new FormData();
-  body.append('file', input.files[0]);
-  const button = e.target.querySelector('button');
-  button.disabled = true;
-  button.textContent = 'Parsing…';
-
-  try {
-    const r = await api('/api/briefs/parse', { method: 'POST', body });
-    const form = $('#brief-form');
-    const f = r.fields;
-    for (const key of ['brand', 'advertiser', 'objective', 'target_audience',
-      'language', 'territory', 'budget_lkr_lakhs', 'period_start', 'period_end']) {
-      if (f[key] !== null && f[key] !== undefined) form[key].value = f[key];
-    }
-    if (f.commercial_durations?.length) {
-      state.durations = f.commercial_durations;
-      renderDurations();
-    }
-    notes(out, [
-      'Fields below were read from the PDF and saved nowhere yet — check each one before saving.',
-      ...(r.warnings || []),
-    ]);
-    if (!r.warnings?.length) out.firstChild.className = 'note ok';
-  } catch (err) {
-    showError(out, err);
-  } finally {
-    button.disabled = false;
-    button.textContent = 'Parse PDF';
-  }
-});
-
 // --- brief save ------------------------------------------------------------
 
 $('#brief-form').addEventListener('submit', async (e) => {
@@ -480,7 +441,7 @@ $('#generate-btn').addEventListener('click', async () => {
     status.textContent = `Plan #${r.plan_id} generated in ${(r.meta.elapsed_ms / 1000).toFixed(1)}s`;
     renderPlan(r);
     $('#result-card').hidden = false;
-    $('#pdf-link').href = `/api/plans/${r.plan_id}/report.pdf`;
+    $('#download-out').innerHTML = '';
     $('#result-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (err) {
     status.className = 'saved err';
@@ -489,6 +450,57 @@ $('#generate-btn').addEventListener('click', async () => {
     button.disabled = false;
   }
 });
+
+/**
+ * Download a generated file, showing the server's error instead of saving it.
+ *
+ * A plain <a download> to an endpoint that fails saves the JSON error body to
+ * disk - which is exactly the "it downloads as JSON" symptom when the PDF
+ * worker is unavailable. Fetching first lets us check the content type and
+ * surface the reason.
+ */
+async function downloadFile(url, buttonLabel) {
+  const out = $('#download-out');
+  out.innerHTML = '';
+  const note = el('div', { class: 'note' }, `Preparing ${buttonLabel}…`);
+  out.append(note);
+  try {
+    const res = await fetch(url);
+    const type = res.headers.get('content-type') || '';
+    if (!res.ok || type.includes('application/json')) {
+      // The endpoint failed and returned an explanation rather than a file.
+      let body = {};
+      try { body = await res.json(); } catch { /* non-JSON error */ }
+      const err = new Error(body.error || `Export failed (${res.status})`);
+      err.hint = body.hint || (url.endsWith('.pdf')
+        ? 'The PDF worker needs Python with matplotlib and reportlab. Use "Export schedule '
+          + '(Excel)" instead, which needs neither.'
+        : null);
+      throw err;
+    }
+    const blob = await res.blob();
+    const disposition = res.headers.get('content-disposition') || '';
+    const name = disposition.match(/filename="?([^"]+)"?/)?.[1]
+      || url.split('/').pop().split('?')[0];
+
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = name;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(objectUrl);
+    out.innerHTML = '';
+  } catch (err) {
+    showError(out, err);
+  }
+}
+
+$('#xlsx-btn').addEventListener('click', () =>
+  downloadFile(`/api/plans/${state.planId}/schedule.xlsx`, 'the Excel schedule'));
+$('#pdf-btn').addEventListener('click', () =>
+  downloadFile(`/api/plans/${state.planId}/report.pdf`, 'the PDF'));
 
 function renderPlan(r) {
   const out = $('#plan-out');
@@ -606,17 +618,26 @@ async function loadSettings() {
     const s = await api('/api/settings');
     const form = $('#drive-form');
     form.adex_folder.value = s.drive.adex_folder_url || s.drive.adex_folder_id || '';
-    form.archive_folder.value = s.drive.archive_folder_id || '';
     form.archive_enabled.checked = s.drive.archive_enabled !== false;
-    // The key itself is never returned; the placeholder says whether one is set.
+
+    // The client id is not secret, so it round-trips; secrets never come back,
+    // and their placeholder says whether one is stored.
+    form.oauth_client_id.value = s.drive.oauth_client_id || '';
+    form.oauth_client_secret.placeholder = s.drive.oauth_configured ? '•••• saved' : 'GOCSPX-…';
+    form.oauth_refresh_token.placeholder = s.drive.oauth_configured ? '•••• saved' : '1//0…';
     form.service_account_json.placeholder = s.drive.credentials_configured
       ? '•••• a service-account key is saved — paste a new one to replace it'
       : '{"type":"service_account","client_email":"…","private_key":"…"}';
 
+    // The chip in the header says at a glance which auth is live.
+    const chip = $('#auth-mode-chip');
+    chip.textContent = { oauth: 'OAuth (user)', service_account: 'Service account' }[s.drive.auth_mode]
+      || 'not configured';
+    chip.className = `chip ${s.drive.auth_mode ? 'chip-ok' : ''}`;
+
     out.innerHTML = '';
-    out.append(el('div', { class: s.drive.credentials_configured ? 'note ok' : 'note' },
-      s.drive.share_note));
-    if (s.drive.adex_folder_source === 'environment') {
+    out.append(el('div', { class: s.drive.auth_mode ? 'note ok' : 'note' }, s.drive.share_note));
+    if (s.drive.auth_mode === 'service_account' && s.drive.adex_folder_source === 'environment') {
       out.append(el('div', { class: 'note' },
         'The adex folder currently comes from an environment variable. Saving here overrides it.'));
     }
@@ -637,14 +658,20 @@ $('#drive-form').addEventListener('submit', async (e) => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         adex_folder: form.adex_folder.value.trim(),
-        archive_folder: form.archive_folder.value.trim(),
-        // Empty means "leave the stored key alone", not "delete it".
+        oauth_client_id: form.oauth_client_id.value.trim(),
+        // Empty means "leave the stored secret alone", not "delete it".
+        ...(form.oauth_client_secret.value.trim()
+          ? { oauth_client_secret: form.oauth_client_secret.value.trim() } : {}),
+        ...(form.oauth_refresh_token.value.trim()
+          ? { oauth_refresh_token: form.oauth_refresh_token.value.trim() } : {}),
         ...(form.service_account_json.value.trim()
-          ? { service_account_json: form.service_account_json.value.trim() }
-          : {}),
+          ? { service_account_json: form.service_account_json.value.trim() } : {}),
         archive_enabled: form.archive_enabled.checked,
       }),
     });
+    // Don't leave secrets sitting in the inputs after they're saved.
+    form.oauth_client_secret.value = '';
+    form.oauth_refresh_token.value = '';
     form.service_account_json.value = '';
     saved.textContent = 'Saved';
     await loadSettings();
@@ -660,17 +687,22 @@ $('#test-drive').addEventListener('click', async () => {
   try {
     const r = await api('/api/settings/drive/test', { method: 'POST' });
     out.innerHTML = '';
-    out.append(el('div', { class: 'note ok' },
-      `Connected as ${r.service_account_email}. Folder "${r.folder_name}" contains `
-      + `${r.spreadsheets_found} spreadsheet(s).`
-      + (r.newest ? ` Newest: ${r.newest}.` : '')));
+    if (r.auth_mode === 'oauth') {
+      out.append(el('div', { class: 'note ok' },
+        `Signed in via OAuth${r.account_email ? ` as ${r.account_email}` : ''}. `
+        + 'Write access confirmed — archiving will work.',
+        r.note ? el('div', { class: 'hintline' }, r.note) : null));
+    } else {
+      out.append(el('div', { class: 'note ok' },
+        `Connected as ${r.service_account_email}. Folder "${r.folder_name}" contains `
+        + `${r.spreadsheets_found} spreadsheet(s).`
+        + (r.newest ? ` Newest: ${r.newest}.` : '')));
+    }
   } catch (err) {
     out.innerHTML = '';
     const box = el('div', { class: 'note err' }, err.message);
-    if (err.body?.service_account_email) {
-      box.append(el('div', { class: 'hintline' },
-        `Service account: ${err.body.service_account_email}`));
-    }
+    const who = err.body?.account_email || err.body?.service_account_email;
+    if (who) box.append(el('div', { class: 'hintline' }, who));
     if (err.body?.hint) box.append(el('div', { class: 'hintline' }, err.body.hint));
     out.append(box);
   }
@@ -721,24 +753,6 @@ $('#purge-archive').addEventListener('click', async () => {
     showError(out, err);
   }
 });
-
-// --- brief file label ------------------------------------------------------
-
-{
-  const input = $('#brief-file');
-  const label = $('#brief-file-label');
-  const drop = input.closest('.drop');
-  const original = label.textContent;
-  input.addEventListener('change', () => {
-    label.textContent = input.files.length ? input.files[0].name : original;
-  });
-  for (const type of ['dragenter', 'dragover']) {
-    drop.addEventListener(type, (e) => { e.preventDefault(); drop.classList.add('over'); });
-  }
-  for (const type of ['dragleave', 'drop']) {
-    drop.addEventListener(type, () => drop.classList.remove('over'));
-  }
-}
 
 $('#refresh-facets').addEventListener('click', loadFacets);
 

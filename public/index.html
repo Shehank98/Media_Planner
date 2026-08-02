@@ -28,19 +28,7 @@
 
     <section class="card">
       <div class="card-head"><h2><span class="step">1</span> Campaign brief</h2></div>
-      <p class="hint">
-        Upload the brief PDF to pre-fill the form, then <strong>check every field before
-        saving</strong> — brief layouts are messy and the parse is a proposal, not a fact.
-      </p>
-      <form id="brief-upload-form">
-        <label class="drop small" for="brief-file">
-          <input type="file" id="brief-file" accept=".pdf">
-          <span>Choose a brief PDF</span>
-          <small id="brief-file-label">optional — you can fill the form in by hand</small>
-        </label>
-        <button type="submit" class="ghost">Parse PDF</button>
-      </form>
-      <div id="brief-warnings" class="result"></div>
+      <p class="hint">Enter the brief details, then save.</p>
 
       <form id="brief-form" class="grid">
         <label>Brand <span class="req">*</span><input name="brand" required></label>
@@ -85,8 +73,12 @@
     <section class="card" id="result-card" hidden>
       <div class="card-head">
         <h2><span class="step">3</span> Recommended plan</h2>
-        <a id="pdf-link" class="primary button" href="#" download>Download PDF</a>
+        <div class="actions">
+          <button id="xlsx-btn" class="primary" type="button">Export schedule (Excel)</button>
+          <button id="pdf-btn" class="ghost" type="button">Download PDF</button>
+        </div>
       </div>
+      <div id="download-out" class="result"></div>
       <div id="plan-out"></div>
     </section>
   </div>
@@ -115,23 +107,46 @@
   <!-- ==================== SETTINGS ==================== -->
   <div id="panel-settings" class="panel" hidden>
     <section class="card">
-      <div class="card-head"><h2>Google Drive</h2></div>
+      <div class="card-head">
+        <h2>Google Drive</h2>
+        <span id="auth-mode-chip" class="chip"></span>
+      </div>
       <p class="hint">
-        Adex workbooks are pulled from a Drive folder on a schedule. Uploaded source files are
-        archived to a <strong>Media Planner</strong> folder for the run and removed after the
-        report is generated.
+        Uploaded source files are archived to a <strong>Media Planner</strong> folder for the run
+        and removed after the report is generated. Adex is kept.
       </p>
+
       <form id="drive-form" class="grid">
-        <label class="span3">Adex folder link
-          <input name="adex_folder" placeholder="https://drive.google.com/drive/folders/…">
+        <div class="span3 subhead">
+          Sign in with OAuth <span class="tag-good">recommended · free</span>
+          <p class="subhead-note">
+            Authenticates as you, using your own 15&nbsp;GB of Drive. A service account has no
+            storage of its own, so it needs a paid Workspace — OAuth does not.
+          </p>
+        </div>
+        <label class="span3">OAuth client ID
+          <input name="oauth_client_id" placeholder="…apps.googleusercontent.com">
         </label>
-        <label class="span3">Archive folder link <span class="optional">(optional)</span>
-          <input name="archive_folder" placeholder="leave blank to create “Media Planner” automatically">
+        <label>OAuth client secret
+          <input name="oauth_client_secret" type="password" placeholder="GOCSPX-…">
         </label>
-        <label class="span3">Service account key (JSON)
-          <textarea name="service_account_json" rows="5"
-                    placeholder='{"type":"service_account","client_email":"…","private_key":"…"}'></textarea>
+        <label class="span2">OAuth refresh token
+          <input name="oauth_refresh_token" type="password" placeholder="1//0…">
         </label>
+
+        <details class="span3 alt">
+          <summary>Or use a service account (needs a Shared Drive / paid Workspace)</summary>
+          <div class="grid inner-grid">
+            <label class="span3">Adex folder link
+              <input name="adex_folder" placeholder="https://drive.google.com/drive/folders/…">
+            </label>
+            <label class="span3">Service account key (JSON)
+              <textarea name="service_account_json" rows="4"
+                        placeholder='{"type":"service_account","client_email":"…","private_key":"…"}'></textarea>
+            </label>
+          </div>
+        </details>
+
         <label class="span3 checkbox">
           <input type="checkbox" name="archive_enabled" checked>
           Archive uploaded files to Drive for each run

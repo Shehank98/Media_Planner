@@ -2,14 +2,21 @@ import fs from 'node:fs';
 import { Readable } from 'node:stream';
 import { google } from 'googleapis';
 import { config } from '../config.js';
-import { getSetting, SETTING_KEYS } from '../services/settings.js';
+import { getSetting, SETTING_KEYS, driveAuthMode } from '../services/settings.js';
 
-// Drive access via a service account. The folder must be shared with the
-// account's client_email - it has no Drive of its own.
+// Drive access, either as a real user (OAuth) or as a service account.
 //
-// Read-only would be enough for the adex sync, but archiving uploads needs
-// write and delete as well, so the scope covers both. The account can only
-// touch what has been shared with it.
+// OAuth is the default when configured, because it authenticates as a person
+// with their own Drive storage - the only option that works without a paid
+// Workspace. A service account has no storage of its own: it can read files
+// shared with it, but can only *write* into a Shared Drive, so archiving under
+// a service account needs paid Workspace. Hence OAuth first.
+//
+// OAuth tokens minted by the Drive quickstart carry the drive.file scope, which
+// grants access only to files the app itself created. That is exactly enough
+// for archiving (the app creates every file it archives), but it means the app
+// cannot read an adex folder a user filled by hand - those files must be
+// uploaded through the app instead. listAdexFiles() explains this if it hits it.
 const SCOPES = ['https://www.googleapis.com/auth/drive'];
 
 const GOOGLE_SHEET = 'application/vnd.google-apps.spreadsheet';
@@ -30,48 +37,78 @@ export class DriveNotConfigured extends Error {
   }
 }
 
-async function loadCredentials() {
+/** Build an OAuth2 auth client from stored user credentials, or null if absent. */
+async function oauthAuth() {
+  const [clientId, clientSecret, refreshToken] = await Promise.all([
+    getSetting(SETTING_KEYS.DRIVE_OAUTH_CLIENT_ID),
+    getSetting(SETTING_KEYS.DRIVE_OAUTH_CLIENT_SECRET),
+    getSetting(SETTING_KEYS.DRIVE_OAUTH_REFRESH_TOKEN),
+  ]);
+  if (!clientId || !clientSecret || !refreshToken) return null;
+
+  const auth = new google.auth.OAuth2(clientId, clientSecret);
+  // The library refreshes the access token from this on demand, so nothing here
+  // has to track expiry.
+  auth.setCredentials({ refresh_token: refreshToken });
+  return { auth, fingerprint: `oauth:${clientId}:${refreshToken.slice(-12)}` };
+}
+
+/** Build a service-account JWT auth client, or throw with a remedy. */
+async function serviceAccountAuth() {
   const raw = await getSetting(SETTING_KEYS.DRIVE_CREDENTIALS);
+  let creds = null;
   if (raw && raw.trim()) {
     const text = raw.trim().startsWith('{')
       ? raw
       : Buffer.from(raw, 'base64').toString('utf8');
     try {
-      return JSON.parse(text);
+      creds = JSON.parse(text);
     } catch (err) {
       throw new DriveNotConfigured(
         `The stored service-account key is not valid JSON: ${err.message}`,
         'Re-paste the whole key file, including the surrounding braces.',
       );
     }
+  } else if (config.drive.credentialsPath && fs.existsSync(config.drive.credentialsPath)) {
+    creds = JSON.parse(fs.readFileSync(config.drive.credentialsPath, 'utf8'));
   }
-  if (config.drive.credentialsPath && fs.existsSync(config.drive.credentialsPath)) {
-    return JSON.parse(fs.readFileSync(config.drive.credentialsPath, 'utf8'));
+  if (!creds) {
+    throw new DriveNotConfigured(
+      'No Google Drive credentials are configured.',
+      'Add OAuth credentials under Settings (recommended, works on the free tier), or paste a '
+      + 'service-account JSON key.',
+    );
   }
-  throw new DriveNotConfigured(
-    'No Google Drive service account is configured.',
-    'Paste a service-account JSON key under Settings, or set GDRIVE_SERVICE_ACCOUNT_JSON.',
-  );
-}
-
-// Cached per credential set, so changing the key in Settings takes effect
-// without a restart.
-let cached = null;
-let cachedFor = null;
-
-export async function driveClient() {
-  const creds = await loadCredentials();
-  const fingerprint = `${creds.client_email}:${creds.private_key_id || ''}`;
-  if (cached && cachedFor === fingerprint) return cached;
-
   const auth = new google.auth.JWT({
     email: creds.client_email,
     key: creds.private_key,
     scopes: SCOPES,
   });
-  cached = google.drive({ version: 'v3', auth });
-  cachedFor = fingerprint;
+  return { auth, fingerprint: `sa:${creds.client_email}:${creds.private_key_id || ''}` };
+}
+
+// Cached per credential set, so changing auth in Settings takes effect without
+// a restart.
+let cached = null;
+let cachedFor = null;
+let cachedMode = null;
+
+export async function driveClient() {
+  // OAuth wins whenever it is fully configured - it is the auth that works on
+  // the free tier.
+  const built = (await oauthAuth()) || (await serviceAccountAuth());
+  if (cached && cachedFor === built.fingerprint) return cached;
+
+  cached = google.drive({ version: 'v3', auth: built.auth });
+  cachedFor = built.fingerprint;
+  cachedMode = built.fingerprint.startsWith('oauth') ? 'oauth' : 'service_account';
   return cached;
+}
+
+export async function currentAuthMode() {
+  // driveAuthMode reads settings without building a client, which is what the
+  // caller usually wants; cachedMode reflects the last client actually built.
+  return (await driveAuthMode()) ?? cachedMode;
 }
 
 export async function adexFolderId() {
@@ -176,23 +213,95 @@ export async function deleteFile(fileId) {
  * Confirm the configuration actually works, and say which part failed.
  *
  * "Test connection" is the whole point of the Settings tab: credentials that
- * parse but address a folder nobody shared are indistinguishable from correct
- * ones until a sync silently returns nothing.
+ * parse but cannot reach Drive are indistinguishable from correct ones until a
+ * sync or an archive silently fails.
+ *
+ * The test is auth-aware. For OAuth the thing that matters is write access -
+ * archiving creates a folder and files - so the probe creates a folder and
+ * deletes it, which proves exactly that. For a service account the folder has
+ * to be shared, so the probe reads it.
  */
 export async function testDriveAccess() {
-  let creds;
-  try {
-    creds = await loadCredentials();
-  } catch (err) {
-    return { ok: false, stage: 'credentials', error: err.message, hint: err.hint };
+  const mode = await currentAuthMode();
+  if (!mode) {
+    return {
+      ok: false,
+      stage: 'credentials',
+      error: 'No Drive credentials are configured.',
+      hint: 'Add OAuth credentials (recommended, free) or a service-account JSON key.',
+    };
   }
+
+  return mode === 'oauth' ? testOAuthAccess() : testServiceAccountAccess();
+}
+
+async function testOAuthAccess() {
+  let drive;
+  try {
+    drive = await driveClient();
+  } catch (err) {
+    return { ok: false, stage: 'credentials', auth_mode: 'oauth', error: err.message, hint: err.hint };
+  }
+
+  // A round-trip create/delete proves the token refreshes and the app can write
+  // - which is all archiving needs. It leaves nothing behind.
+  let probeId = null;
+  try {
+    const probe = await drive.files.create({
+      requestBody: { name: 'Media Planner — connection test', mimeType: FOLDER },
+      fields: 'id',
+    });
+    probeId = probe.data.id;
+
+    let email = null;
+    try {
+      const about = await drive.about.get({ fields: 'user(emailAddress)' });
+      email = about.data.user?.emailAddress || null;
+    } catch {
+      // about.get needs a broader scope than drive.file; absence is not a
+      // failure, so the account email is best-effort.
+      email = null;
+    }
+
+    return {
+      ok: true,
+      auth_mode: 'oauth',
+      account_email: email,
+      write_verified: true,
+      note: 'Signed in as a user; archiving will write to this Drive. Adex still needs to be '
+        + 'uploaded through the app (OAuth cannot read folders it did not create).',
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      stage: 'access',
+      auth_mode: 'oauth',
+      error: err.message,
+      hint: /invalid_grant/i.test(err.message || '')
+        ? 'The refresh token was rejected - it may have been revoked or expired. Generate a new one.'
+        : 'Check the OAuth client id, secret and refresh token.',
+    };
+  } finally {
+    if (probeId) await drive.files.delete({ fileId: probeId }).catch(() => {});
+  }
+}
+
+async function testServiceAccountAccess() {
+  let built;
+  try {
+    built = await serviceAccountAuth();
+  } catch (err) {
+    return { ok: false, stage: 'credentials', auth_mode: 'service_account', error: err.message, hint: err.hint };
+  }
+  const email = built.fingerprint.split(':')[1];
 
   const folder = await getSetting(SETTING_KEYS.DRIVE_FOLDER);
   if (!folder) {
     return {
       ok: false,
       stage: 'folder',
-      service_account_email: creds.client_email,
+      auth_mode: 'service_account',
+      service_account_email: email,
       error: 'No adex folder is configured.',
       hint: 'Paste the Drive folder link above.',
     };
@@ -208,7 +317,8 @@ export async function testDriveAccess() {
     const files = await listAdexFiles({ folderId: folder });
     return {
       ok: true,
-      service_account_email: creds.client_email,
+      auth_mode: 'service_account',
+      service_account_email: email,
       folder_name: meta.data.name,
       spreadsheets_found: files.length,
       newest: files[0]?.name || null,
@@ -218,11 +328,12 @@ export async function testDriveAccess() {
     return {
       ok: false,
       stage: 'access',
-      service_account_email: creds.client_email,
+      auth_mode: 'service_account',
+      service_account_email: email,
       error: notFound
         ? 'The folder was not found, or is not shared with the service account.'
         : err.message,
-      hint: `Share the folder with ${creds.client_email} (Editor) and check the link points at a folder.`,
+      hint: `Share the folder with ${email} (Editor) and check the link points at a folder.`,
     };
   }
 }

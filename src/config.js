@@ -77,6 +77,14 @@ export const config = {
     folderId: process.env.GDRIVE_FOLDER_ID,
     credentialsPath: process.env.GOOGLE_APPLICATION_CREDENTIALS,
     credentialsJson: process.env.GDRIVE_SERVICE_ACCOUNT_JSON,
+    // OAuth as a real user - the alternative to a service account, and the one
+    // that works without a paid Workspace, since a service account has no Drive
+    // storage of its own.
+    oauth: {
+      clientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+      refreshToken: process.env.GOOGLE_OAUTH_REFRESH_TOKEN,
+    },
     cron: process.env.SYNC_CRON || '0 */4 * * *',
     enabled: bool(process.env.SYNC_ENABLED, true),
   },

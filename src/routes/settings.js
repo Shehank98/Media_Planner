@@ -64,6 +64,25 @@ router.put('/drive', asyncRoute(async (req, res) => {
     }
   }
 
+  // OAuth-as-a-user credentials, the free-tier alternative to a service account.
+  // Client id is not secret and can be echoed back; secret and refresh token are
+  // write-only. Empty string means "leave the stored value alone", so a user can
+  // update the id without re-pasting the token; null clears it explicitly.
+  if (body.oauth_client_id !== undefined) {
+    await setSetting(SETTING_KEYS.DRIVE_OAUTH_CLIENT_ID, body.oauth_client_id || null);
+  }
+  if (body.oauth_client_secret) {
+    await setSetting(SETTING_KEYS.DRIVE_OAUTH_CLIENT_SECRET, body.oauth_client_secret.trim());
+  }
+  if (body.oauth_refresh_token) {
+    await setSetting(SETTING_KEYS.DRIVE_OAUTH_REFRESH_TOKEN, body.oauth_refresh_token.trim());
+  }
+  if (body.clear_oauth === true) {
+    await setSetting(SETTING_KEYS.DRIVE_OAUTH_CLIENT_ID, null);
+    await setSetting(SETTING_KEYS.DRIVE_OAUTH_CLIENT_SECRET, null);
+    await setSetting(SETTING_KEYS.DRIVE_OAUTH_REFRESH_TOKEN, null);
+  }
+
   if (body.archive_enabled !== undefined) {
     await setSetting(SETTING_KEYS.DRIVE_ARCHIVE_ENABLED, body.archive_enabled ? 'true' : 'false');
   }
