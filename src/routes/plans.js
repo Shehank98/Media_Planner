@@ -8,6 +8,7 @@ import { buildAggregatedData } from '../services/aggregate.js';
 import { getBrief } from '../services/briefRepo.js';
 import { generateReport } from '../services/reportService.js';
 import { buildScheduleWorkbook } from '../services/scheduleExcel.js';
+import { buildReportHtml } from '../services/reportHtml.js';
 
 export const router = express.Router();
 
@@ -18,14 +19,18 @@ export const router = express.Router();
  */
 router.post('/generate/:briefId', asyncRoute(async (req, res) => {
   const briefId = Number(req.params.briefId);
-  const { quarters, programmeLimit, provider } = req.body || {};
-  const result = await generatePlan(briefId, { quarters, programmeLimit, provider });
+  const { quarters, programmeLimit, provider, channels } = req.body || {};
+  const result = await generatePlan(briefId, { quarters, programmeLimit, provider, channels });
+
+  const schedule = result.recommendation.schedule || [];
+  const dates = [...new Set(schedule.flatMap((l) => Object.keys(l.spot_dates || {})))].sort();
 
   res.status(201).json({
     plan_id: result.plan.id,
     brief_id: briefId,
     channel_plan: result.recommendation.channel_plan,
-    schedule: result.recommendation.schedule,
+    schedule,
+    dates,
     schedule_totals: result.recommendation.schedule_totals,
     overall_rationale: result.recommendation.overall_rationale,
     competitor_analysis: result.recommendation.competitor_analysis,
@@ -121,6 +126,24 @@ router.get('/:id/schedule.xlsx', asyncRoute(async (req, res) => {
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="${slug}-schedule-${planId}.xlsx"`);
   res.send(Buffer.from(buffer));
+}));
+
+/**
+ * A print-ready HTML report for a plan.
+ *
+ * The dependable "PDF" path: the browser prints this to PDF, so it needs no
+ * Python worker and works on any host. Built from the same stored plan as the
+ * Excel export.
+ */
+router.get('/:id/report.html', asyncRoute(async (req, res) => {
+  const planId = Number(req.params.id);
+  const plan = await getPlan(planId);
+  if (!plan) return res.status(404).json({ error: 'Plan not found' });
+
+  const [schedule, brief] = await Promise.all([getSchedule(planId), getBrief(plan.brief_id)]);
+  const html = buildReportHtml({ brief: brief || {}, plan, schedule });
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
 }));
 
 /**

@@ -4,6 +4,7 @@ import { analyzeAndRecommend } from '../llm/index.js';
 import { buildAggregatedData } from './aggregate.js';
 import { buildChartData } from './chartData.js';
 import { getBrief } from './briefRepo.js';
+import { comparisonKey } from '../util/normalise.js';
 
 // ---------------------------------------------------------------------------
 // The query -> aggregate -> model -> JSON pipeline (Section 5, steps 3-6).
@@ -18,7 +19,13 @@ export async function generatePlan(briefId, opts = {}) {
   if (!brief) throw Object.assign(new Error(`Brief ${briefId} not found`), { status: 404 });
 
   const started = Date.now();
-  const aggregated = await buildAggregatedData(brief, opts);
+  let aggregated = await buildAggregatedData(brief, opts);
+
+  // When the planner has already chosen channels, narrow what the model sees to
+  // those channels so it plans within them rather than re-picking the mix.
+  if (opts.channels?.length) {
+    aggregated = filterAggregatedToChannels(aggregated, opts.channels);
+  }
 
   // Refuse before spending a model call. With nothing loaded the model can only
   // invent a lineup or decline, and either way the planner learns nothing they
@@ -87,6 +94,31 @@ export async function generatePlan(briefId, opts = {}) {
   });
 
   return { plan: rows[0], recommendation, aggregated, brief };
+}
+
+/**
+ * Narrow the aggregated payload to a chosen set of channels.
+ *
+ * Used when the planner has already picked the channels and wants the model to
+ * plan within them. Everything keyed by channel is filtered; the adex context
+ * (which is category-level, not per-channel) is left as-is.
+ */
+export function filterAggregatedToChannels(aggregated, channels) {
+  const keep = new Set(channels.map((c) => comparisonKey(c)));
+  const byChannel = (rows) => (rows || []).filter((r) => keep.has(comparisonKey(r.channel_name)));
+  return {
+    ...aggregated,
+    programme_ratings: byChannel(aggregated.programme_ratings),
+    channel_performance: byChannel(aggregated.channel_performance),
+    best_days: byChannel(aggregated.best_days),
+    best_dayparts: byChannel(aggregated.best_dayparts),
+    programme_rates: byChannel(aggregated.programme_rates),
+    competitor_spot_pressure: byChannel(aggregated.competitor_spot_pressure),
+    data_notes: [
+      ...(aggregated.data_notes || []),
+      `Planning was restricted to the channels you chose: ${channels.join(', ')}.`,
+    ],
+  };
 }
 
 /** Only the fields the system prompt promises the model - nothing internal. */

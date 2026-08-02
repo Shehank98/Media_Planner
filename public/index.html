@@ -66,8 +66,14 @@
       <div class="actions">
         <button id="analyze-btn" class="primary" type="button">Analyze</button>
         <button id="channels-next" class="primary" type="button" hidden>Next: choose programmes →</button>
+        <button id="ai-plan-btn" class="ghost" type="button" hidden>Let AI plan it all ✨</button>
         <span id="analyze-status" class="saved"></span>
       </div>
+      <p class="hint" id="ai-plan-hint" hidden>
+        AI recommends the channels, programmes, time bands, spot counts and day patterns — playing
+        off where competitors sit to stay top of mind — then it is plotted on real dates. Tick
+        channels first to keep it to those, or leave them unticked to let AI choose the mix.
+      </p>
       <div id="explore-out" class="result"></div>
     </section>
 
@@ -96,7 +102,8 @@
         <h2><span class="step">4</span> Recommended plan</h2>
         <div class="actions">
           <button id="xlsx-btn" class="primary" type="button">Export schedule (Excel)</button>
-          <button id="pdf-btn" class="ghost" type="button">Download PDF</button>
+          <button id="report-btn" class="ghost" type="button">Save as PDF (print)</button>
+          <button id="pdf-btn" class="ghost" type="button" hidden>Download PDF</button>
         </div>
       </div>
       <div id="download-out" class="result"></div>

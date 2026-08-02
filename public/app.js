@@ -413,6 +413,8 @@ $('#brief-form').addEventListener('submit', async (e) => {
     $('#programmes-card').hidden = true;
     $('#result-card').hidden = true;
     $('#channels-next').hidden = true;
+    $('#ai-plan-btn').hidden = true;
+    $('#ai-plan-hint').hidden = true;
     $('#explore-out').innerHTML = '';
     $('#programmes-out').innerHTML = '';
     saved.textContent = `Saved as brief #${brief.id}`;
@@ -437,6 +439,8 @@ $('#analyze-btn').addEventListener('click', async () => {
     state.analysis = r;
     state.selectedChannels = new Set();
     renderChannels(r);
+    $('#ai-plan-btn').hidden = false;
+    $('#ai-plan-hint').hidden = false;
     status.textContent = `${r.channels.length} channels · panel: ${r.audience.panel || 'all audiences'}`;
   } catch (err) {
     showError($('#explore-out'), err);
@@ -519,6 +523,101 @@ $('#channels-back').addEventListener('click', () => {
   $('#programmes-card').hidden = true;
   $('#explore-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
+
+// --- AI recommends the whole plan ------------------------------------------
+
+$('#ai-plan-btn').addEventListener('click', async () => {
+  const status = $('#analyze-status');
+  const button = $('#ai-plan-btn');
+  const chosen = [...state.selectedChannels];
+  button.disabled = true;
+  status.className = 'saved';
+  status.textContent = chosen.length
+    ? `AI is planning across ${chosen.length} chosen channel(s) — this can take a moment…`
+    : 'AI is choosing the channel mix and plotting the plan — this can take a moment…';
+  try {
+    const r = await api(`/api/plans/generate/${state.briefId}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(chosen.length ? { channels: chosen } : {}),
+    });
+    state.planId = r.plan_id;
+    status.textContent = `AI plan #${r.plan_id} ready`;
+    renderAiPlan(r);
+    $('#result-card').hidden = false;
+    $('#download-out').innerHTML = '';
+    $('#result-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (err) {
+    status.className = 'saved err';
+    status.textContent = err.hint ? `${err.message} — ${err.hint}` : err.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+/** The AI's channel-first plan: mix, programmes, strategy and dated schedule. */
+function renderAiPlan(r) {
+  const out = $('#plan-out');
+  out.innerHTML = '';
+
+  out.append(el('div', { class: 'actions' },
+    el('span', { class: `badge ${r.confidence}` }, `confidence: ${r.confidence}`),
+    r.meta?.model_used ? el('span', { class: 'chip' }, r.meta.model_used) : null));
+
+  const b = r.budget || {};
+  if (b.budget_lakhs !== null && b.budget_lakhs !== undefined) {
+    out.append(el('div', { class: `budget ${b.over_budget ? 'over' : ''}` },
+      el('b', {}, `LKR ${fmt(b.total_cost_lakhs, 2)} lakhs`),
+      ` of ${fmt(b.budget_lakhs, 2)} lakhs (${fmt(b.utilisation_pct, 1)}%)`,
+      ` · ${fmt(b.total_spots)} spots`,
+      b.uncosted_spots ? ` · ${fmt(b.uncosted_spots)} uncosted` : ''));
+  }
+
+  if (r.overall_rationale) {
+    out.append(el('h3', {}, 'Strategy'));
+    out.append(el('div', { class: 'prose' }, r.overall_rationale));
+  }
+
+  for (const channel of r.channel_plan || []) {
+    out.append(el('div', { class: 'channel-head' },
+      el('h4', {}, channel.channel),
+      channel.share_of_audience ? el('span', { class: 'chip' }, `${fmt(channel.share_of_audience, 2)}% share`) : null));
+    if (channel.why_this_channel) out.append(el('div', { class: 'prose small-prose' }, channel.why_this_channel));
+    out.append(table(
+      ['Programme', 'Day', 'Time band', 'Dur', 'Spots', 'TVR', 'Rate', 'Why'],
+      (channel.programmes || []).map((p) => [
+        p.in_source_data === false ? el('span', {}, p.programme, el('span', { class: 'flag' }, ' †')) : p.programme,
+        p.day_pattern || '-', p.time_band || '-', p.duration_secs ? `${p.duration_secs}s` : '-',
+        p.spots ?? '-', fmt(p.tvr, 2),
+        p.rate_supported === false ? el('span', { class: 'flag' }, `${fmt(p.rate_lkr)} ‡`) : fmt(p.rate_lkr),
+        p.rationale || '',
+      ]),
+      [3, 4, 5, 6],
+    ));
+  }
+
+  if (r.competitor_analysis) {
+    out.append(el('h3', {}, 'Against competitors'));
+    out.append(el('div', { class: 'prose' }, r.competitor_analysis));
+  }
+
+  const c = r.clutter || {};
+  if (c.by_belt?.length) {
+    out.append(el('h3', {}, 'Time-belt spread'));
+    out.append(table(['Time belt', 'Spots', 'Share of plan'],
+      c.by_belt.map((x) => [x.time_belt, fmt(x.spots), `${fmt(x.share_pct, 1)}%`]), [1, 2]));
+    if (c.issues?.length) for (const i of c.issues) out.append(el('div', { class: 'note' }, i.detail));
+    else out.append(el('div', { class: 'note ok' }, 'No belt carries an unreasonable share of the buy.'));
+  }
+  if (r.clutter_strategy) out.append(el('div', { class: 'prose' }, r.clutter_strategy));
+
+  renderScheduleGrid(out, r);
+
+  if (r.gaps_or_caveats) {
+    out.append(el('h3', {}, 'Notes & caveats'));
+    out.append(el('div', { class: 'prose' }, r.gaps_or_caveats));
+  }
+}
 
 // --- step 3: programme basket for the chosen channels ----------------------
 
@@ -723,6 +822,14 @@ async function downloadFile(url, buttonLabel) {
 
 $('#xlsx-btn').addEventListener('click', () =>
   downloadFile(`/api/plans/${state.planId}/schedule.xlsx`, 'the Excel schedule'));
+
+// The dependable "PDF": open the print-ready HTML report and let the browser
+// save it as PDF - no Python worker involved.
+$('#report-btn').addEventListener('click', () => {
+  if (!state.planId) return;
+  window.open(`/api/plans/${state.planId}/report.html`, '_blank', 'noopener');
+});
+
 $('#pdf-btn').addEventListener('click', () =>
   downloadFile(`/api/plans/${state.planId}/report.pdf`, 'the PDF'));
 
@@ -780,29 +887,32 @@ function renderSchedule(r) {
     out.append(el('div', { class: 'prose' }, ex.clutter_strategy));
   }
 
-  // The dated schedule grid.
-  if (r.schedule?.length) {
-    const dates = (r.dates && r.dates.length)
-      ? r.dates
-      : [...new Set(r.schedule.flatMap((l) => Object.keys(l.spot_dates || {})))].sort();
-    out.append(el('h3', {}, `Schedule · ${fmt(r.schedule_totals?.total_spots)} spots`));
-    out.append(table(
-      ['Channel', 'Programme', 'Day', 'Time', 'Dur', 'TVR', 'Spots', 'Cost', ...dates.map((d) => d.slice(5))],
-      r.schedule.map((l) => [
-        l.channel_name, l.programme_name, l.day_pattern || '-',
-        l.time_band || '-', l.duration_secs ? `${l.duration_secs}s` : '-',
-        fmt(l.tvr, 2), l.spots,
-        l.cost_lkr === null || l.cost_lkr === undefined ? '-' : fmt(l.cost_lkr),
-        ...dates.map((d) => (l.spot_dates || {})[d] || ''),
-      ]),
-      [4, 5, 6, 7, ...dates.map((_, i) => i + 8)],
-    ));
-  }
+  renderScheduleGrid(out, r);
 
   if ((r.warnings || []).length) {
     out.append(el('h3', {}, 'Notes'));
     for (const w of r.warnings) out.append(el('div', { class: 'note' }, w));
   }
+}
+
+/** The dated spot grid, shared by the manual build and the AI plan. */
+function renderScheduleGrid(out, r) {
+  if (!r.schedule?.length) return;
+  const dates = (r.dates && r.dates.length)
+    ? r.dates
+    : [...new Set(r.schedule.flatMap((l) => Object.keys(l.spot_dates || {})))].sort();
+  out.append(el('h3', {}, `Schedule · ${fmt(r.schedule_totals?.total_spots)} spots`));
+  out.append(table(
+    ['Channel', 'Programme', 'Day', 'Time', 'Dur', 'TVR', 'Spots', 'Cost', ...dates.map((d) => d.slice(5))],
+    r.schedule.map((l) => [
+      l.channel_name, l.programme_name, l.day_pattern || '-',
+      l.time_band || '-', l.duration_secs ? `${l.duration_secs}s` : '-',
+      fmt(l.tvr, 2), l.spots,
+      l.cost_lkr === null || l.cost_lkr === undefined ? '-' : fmt(l.cost_lkr),
+      ...dates.map((d) => (l.spot_dates || {})[d] || ''),
+    ]),
+    [4, 5, 6, 7, ...dates.map((_, i) => i + 8)],
+  ));
 }
 
 // --- settings --------------------------------------------------------------
