@@ -266,7 +266,7 @@ async function programmeBeltFor(picks) {
       `SELECT lower(channel_name) AS ch, lower(programme_name) AS prog,
               advt_time, prog_time
          FROM media_watch_spots
-        WHERE programme_name <> ''`,
+        WHERE programme_name <> '' AND deleted_at IS NULL`,
     ),
   ]);
 
@@ -388,7 +388,7 @@ async function observedSpendByChannel() {
             round(sum(cost)::numeric, 0) AS total_cost,
             count(*)                     AS spots
        FROM media_watch_spots
-      WHERE cost IS NOT NULL AND channel_name <> ''
+      WHERE cost IS NOT NULL AND channel_name <> '' AND deleted_at IS NULL
       GROUP BY channel_name`,
   );
   return rows;
@@ -422,7 +422,7 @@ async function costPerSecondByProgramme() {
             round(avg(cost / NULLIF(duration_secs, 0))::numeric, 2) AS cost_per_sec,
             count(*) AS observed_spots
        FROM media_watch_spots
-      WHERE cost IS NOT NULL AND duration_secs > 0
+      WHERE cost IS NOT NULL AND duration_secs > 0 AND deleted_at IS NULL
       GROUP BY 1, 2`,
   );
   return rows;

@@ -11,6 +11,7 @@ import {
   persistMicos, persistMediaWatch, micosFacets,
   listMediaWatchSources, deleteMediaWatchSource,
 } from '../services/micosRepo.js';
+import { createImportBatch, tagRows } from '../services/workflow/repo.js';
 import { upsertAdexRows, adexFacets } from '../services/adexRepo.js';
 import { archiveUpload, purgeArchive, archiveStatus } from '../services/driveArchive.js';
 import { pushAll } from '../util/arrays.js';
@@ -206,7 +207,22 @@ router.post('/tv', upload.any(), asyncRoute(async (req, res) => {
       const result = await persistMicos(parsed, { audienceOverride });
       for (const key of Object.keys(persisted)) persisted[key] += result[key] ?? 0;
     }
-    const mwResult = mediaWatchSpots.length ? await persistMediaWatch(mediaWatchSpots) : { spots: 0 };
+    // Media watch lands under an import batch so a whole bad upload can be
+    // undone, and every row is tagged PT/Non-PT and Value Addition/Spot.
+    let mwResult = { spots: 0 };
+    let mwBatchId = null;
+    if (mediaWatchSpots.length) {
+      const dates = mediaWatchSpots.map((s) => s.aired_on).filter(Boolean).sort();
+      mwBatchId = await createImportBatch({
+        sourceFileName: files.map((f) => f.originalname).join(', ').slice(0, 300),
+        kind: 'media_watch',
+        periodStart: dates[0] || null,
+        periodEnd: dates[dates.length - 1] || null,
+        rowCount: mediaWatchSpots.length,
+      });
+      mwResult = await persistMediaWatch(mediaWatchSpots, { batchId: mwBatchId });
+      await tagRows({ batchId: mwBatchId });
+    }
     const adexUpserted = adexRows.length ? await upsertAdexRows(adexRows) : 0;
 
     // Archive last: the data is already safely in Postgres, so a Drive outage

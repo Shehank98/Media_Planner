@@ -145,21 +145,23 @@ export async function persistMicos(parsed, { audienceOverride = null } = {}) {
 }
 
 /** Persist a media watch spot log. */
-export async function persistMediaWatch(spots) {
+export async function persistMediaWatch(spots, { batchId = null } = {}) {
   if (!spots.length) return { spots: 0 };
+  // Stamp the import batch on every row so the whole upload can be undone.
+  const rows = batchId ? spots.map((s) => ({ ...s, import_batch_id: batchId })) : spots;
   return withTransaction(async (client) => {
     const upserted = await upsertBatch(client, {
       table: 'media_watch_spots',
       columns: ['medium', 'channel_name', 'programme_name', 'aired_on', 'day_of_week',
         'prog_time', 'advt_time', 'product_group', 'advertiser', 'product', 'advt_theme',
         'ad_pos', 'tot_ads', 'brk_no', 'pos_in_brk', 'ads_in_brk', 'language',
-        'duration_secs', 'cost', 'source_file'],
+        'duration_secs', 'cost', 'source_file', 'import_batch_id'],
       conflict: `(channel_name, programme_name, aired_on, advt_time,
                  COALESCE(product, ''), COALESCE(duration_secs, -1))`,
       update: ['medium', 'day_of_week', 'prog_time', 'product_group', 'advertiser',
         'advt_theme', 'ad_pos', 'tot_ads', 'brk_no', 'pos_in_brk', 'ads_in_brk',
-        'language', 'cost', 'source_file'],
-      rows: spots,
+        'language', 'cost', 'source_file', 'import_batch_id'],
+      rows,
     });
     return { spots: upserted };
   });
@@ -182,7 +184,7 @@ export async function listMediaWatchSources() {
            round(sum(cost)::numeric, 0)        AS total_cost,
            max(uploaded_at)                    AS uploaded_at
       FROM media_watch_spots
-     WHERE source_file IS NOT NULL AND source_file <> ''
+     WHERE source_file IS NOT NULL AND source_file <> '' AND deleted_at IS NULL
      GROUP BY source_file
      ORDER BY max(uploaded_at) DESC NULLS LAST`);
   return rows;
@@ -210,7 +212,7 @@ export async function micosFacets(pool) {
       (SELECT count(*) FROM tv_programme_ratings) AS programme_rows,
       (SELECT count(*) FROM tv_channel_daypart) AS daypart_rows,
       (SELECT count(*) FROM tv_spot_grp) AS spot_rows,
-      (SELECT count(*) FROM media_watch_spots) AS media_watch_rows,
+      (SELECT count(*) FROM media_watch_spots WHERE deleted_at IS NULL) AS media_watch_rows,
       (SELECT min(period_start) FROM tv_report_meta) AS period_start,
       (SELECT max(period_end) FROM tv_report_meta) AS period_end
   `);

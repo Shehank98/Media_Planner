@@ -118,7 +118,7 @@ async function topProgrammes(audience, filters, limit) {
               round(avg(duration_secs)::numeric, 0) AS avg_spot_secs,
               count(*) AS observed_spots
          FROM media_watch_spots
-        WHERE cost IS NOT NULL
+        WHERE cost IS NOT NULL AND deleted_at IS NULL
         GROUP BY 1, 2
      )
      SELECT c.channel_name,
@@ -221,7 +221,7 @@ async function programmeRates(filters) {
             round(max(cost)::numeric, 0)   AS max_cost,
             array_agg(DISTINCT day_of_week) FILTER (WHERE day_of_week IS NOT NULL) AS days_observed
        FROM media_watch_spots
-      WHERE cost IS NOT NULL
+      WHERE cost IS NOT NULL AND deleted_at IS NULL
         AND ($1::text IS NULL OR medium = $1)
         AND ($2::text IS NULL OR language ILIKE '%' || $2 || '%')
       GROUP BY medium, channel_name, programme_name, duration_secs

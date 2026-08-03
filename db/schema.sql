@@ -362,3 +362,117 @@ CREATE INDEX IF NOT EXISTS idx_sync_log_started ON sync_log (started_at DESC);
 -- Lets the sync skip Drive files whose modifiedTime hasn't moved since the
 -- last successful run.
 CREATE INDEX IF NOT EXISTS idx_sync_log_file ON sync_log (drive_file_id, status, started_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- Planning workflow (the wizard: import -> advertiser/competitor -> channels ->
+-- programmes -> budget -> schedule).
+--
+-- Adapts the agency build spec to this codebase: media watch already lands in
+-- media_watch_spots, so rather than a parallel table that fragments the
+-- pipeline, that table is extended with the batch, daypart and category tags the
+-- workflow needs. Everything here is soft-deleted (deleted_at) so nothing is
+-- lost by accident; every query filters deleted_at IS NULL.
+-- ---------------------------------------------------------------------------
+
+-- One upload of monitoring/summary data, so a whole bad import can be undone.
+CREATE TABLE IF NOT EXISTS import_batches (
+  id SERIAL PRIMARY KEY,
+  source_file_name TEXT,
+  kind TEXT,                       -- media_watch | channel_summary | top_programmes | adex
+  imported_by TEXT,
+  imported_at TIMESTAMPTZ DEFAULT now(),
+  period_start DATE,
+  period_end DATE,
+  row_count INTEGER DEFAULT 0,
+  deleted_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_import_batches_live ON import_batches (imported_at DESC) WHERE deleted_at IS NULL;
+
+-- Batch, daypart (PT/Non-PT) and category (Value Addition/Spot) tags on the
+-- monitoring fact table, plus soft delete. Added here so the workflow can scope,
+-- classify and undo without a second copy of the data.
+ALTER TABLE media_watch_spots ADD COLUMN IF NOT EXISTS import_batch_id INTEGER REFERENCES import_batches(id);
+ALTER TABLE media_watch_spots ADD COLUMN IF NOT EXISTS daypart TEXT;        -- PT | Non-PT
+ALTER TABLE media_watch_spots ADD COLUMN IF NOT EXISTS ad_category TEXT;    -- Value Addition | Spot
+ALTER TABLE media_watch_spots ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_mw_batch ON media_watch_spots (import_batch_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_mw_advertiser_live ON media_watch_spots (advertiser) WHERE deleted_at IS NULL;
+
+-- Which Advt_Theme values are value additions (sponsorships, integrations) vs
+-- plain spots. Agency-wide by default (theme is unique).
+CREATE TABLE IF NOT EXISTS theme_category_map (
+  id SERIAL PRIMARY KEY,
+  advt_theme TEXT UNIQUE,
+  category TEXT CHECK (category IN ('Value Addition','Spot')),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Prime-time boundaries. Seeded with the spec's defaults; editable so the
+-- 6am/6pm/midnight split can move without a redeploy.
+CREATE TABLE IF NOT EXISTS daypart_settings (
+  id SERIAL PRIMARY KEY,
+  label TEXT UNIQUE,               -- PT | Non-PT
+  start_time TIME,
+  end_time TIME
+);
+INSERT INTO daypart_settings (label, start_time, end_time)
+  VALUES ('Non-PT', '06:00', '18:00'), ('PT', '18:00', '24:00')
+  ON CONFLICT (label) DO NOTHING;
+
+-- Rate card: the 30-second rate per channel/programme/daypart, versioned by
+-- effective dates so old plans still resolve at the rate they were built on.
+CREATE TABLE IF NOT EXISTS rate_card (
+  id SERIAL PRIMARY KEY,
+  channel TEXT,
+  program_name TEXT,
+  daypart TEXT,
+  rate_30sec NUMERIC(12,2),
+  effective_from DATE,
+  effective_to DATE,
+  source_note TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  deleted_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_rate_card_lookup ON rate_card (channel, program_name, daypart) WHERE deleted_at IS NULL;
+
+-- A saved plan and its build-up: channels, programme basket, and dated schedule.
+CREATE TABLE IF NOT EXISTS plans (
+  id SERIAL PRIMARY KEY,
+  name TEXT,
+  advertiser TEXT,
+  competitors TEXT[],
+  period_start DATE,
+  period_end DATE,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  deleted_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS plan_channels (
+  id SERIAL PRIMARY KEY,
+  plan_id INTEGER REFERENCES plans(id),
+  channel TEXT,
+  budget NUMERIC(14,2),
+  deleted_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS plan_programmes (
+  id SERIAL PRIMARY KEY,
+  plan_id INTEGER REFERENCES plans(id),
+  plan_channel_id INTEGER REFERENCES plan_channels(id),
+  program_name TEXT,
+  daypart TEXT,
+  rate_30sec NUMERIC(12,2),
+  suggested_spots INTEGER,
+  total_cost NUMERIC(14,2),
+  deleted_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS plan_schedule_days (
+  id SERIAL PRIMARY KEY,
+  plan_programme_id INTEGER REFERENCES plan_programmes(id),
+  air_date DATE,
+  day_of_week TEXT,
+  spots INTEGER,
+  cost NUMERIC(14,2),
+  deleted_at TIMESTAMPTZ
+);
