@@ -49,12 +49,15 @@ export function buildReportHtml({ brief = {}, plan = {}, schedule = [] }) {
       </div>
     </header>`;
 
+  const grpNote = totals.total_grp
+    ? ` · ${dp(totals.total_grp, 1)} GRPs${totals.weight_band && totals.weight_band !== 'none' ? ` (${esc(totals.weight_band)} weight)` : ''}`
+    : '';
   const budgetBlock = budget.budget_lakhs !== null && budget.budget_lakhs !== undefined
     ? `<div class="budget ${budget.over_budget ? 'over' : 'ok'}">
          <b>LKR ${dp(budget.total_cost_lakhs, 2)} lakhs</b> of ${dp(budget.budget_lakhs, 2)} lakhs
-         (${dp(budget.utilisation_pct, 1)}%) · ${money(budget.total_spots ?? totals.total_spots)} spots
+         (${dp(budget.utilisation_pct, 1)}%) · ${money(budget.total_spots ?? totals.total_spots)} spots${grpNote}
        </div>`
-    : `<div class="budget ok"><b>${money(totals.total_spots)} spots</b> · budget not stated</div>`;
+    : `<div class="budget ok"><b>${money(totals.total_spots)} spots</b>${grpNote} · budget not stated</div>`;
 
   const strategy = section('Strategy', plan.overall_rationale)
     + section('Against competitors', plan.competitor_analysis || chart.competitor_analysis)

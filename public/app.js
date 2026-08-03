@@ -901,7 +901,11 @@ function renderScheduleGrid(out, r) {
   const dates = (r.dates && r.dates.length)
     ? r.dates
     : [...new Set(r.schedule.flatMap((l) => Object.keys(l.spot_dates || {})))].sort();
-  out.append(el('h3', {}, `Schedule · ${fmt(r.schedule_totals?.total_spots)} spots`));
+  const t = r.schedule_totals || {};
+  const grpNote = t.total_grp
+    ? ` · ${fmt(t.total_grp, 1)} GRPs${t.weight_band && t.weight_band !== 'none' ? ` (${t.weight_band} weight)` : ''}`
+    : '';
+  out.append(el('h3', {}, `Schedule · ${fmt(t.total_spots)} spots${grpNote}`));
   out.append(table(
     ['Channel', 'Programme', 'Day', 'Time', 'Dur', 'TVR', 'Spots', 'Cost', ...dates.map((d) => d.slice(5))],
     r.schedule.map((l) => [

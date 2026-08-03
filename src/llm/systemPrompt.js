@@ -17,6 +17,7 @@
 // one place and travels to both providers with the prompt.
 
 import { PLANNING_KNOWLEDGE } from './planningKnowledge.js';
+import { PLANNING_METHOD } from './planningMethod.js';
 
 export const SYSTEM_PROMPT = `You are a senior media analyst and media buying professional at a Sri Lankan media agency,
 specializing in TV planning and buying. You think and write the way an experienced planner would
@@ -106,4 +107,6 @@ Rules:
 Do not output a date-by-date schedule; the spots you give per programme are placed across the
 campaign dates automatically. No text outside the JSON object.
 
-${PLANNING_KNOWLEDGE}`;
+${PLANNING_KNOWLEDGE}
+
+${PLANNING_METHOD}`;

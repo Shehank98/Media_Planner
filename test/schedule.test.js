@@ -152,9 +152,26 @@ test('summarise totals by channel and overall', () => {
   assert.equal(totals.uncosted_spots, 4, 'the weekend line has no rate');
 });
 
+test('summarise totals GRPs as TVR x spots and grades the weight', () => {
+  const { totals } = buildSchedule(PLAN, BRIEF, RATES);
+  // 21.33*8 + 19.96*4 = 170.64 + 79.84 = 250.48
+  assert.equal(totals.total_grp, 250.5);
+  assert.equal(totals.channels[0].grp, 250.5);
+  assert.equal(totals.weight_band, 'light', 'below the maintenance benchmark');
+});
+
+test('weight bands follow the launch and maintenance benchmarks', () => {
+  const grpFor = (tvr, spots) => summarise([{ channel_name: 'C', tvr, spots }]).weight_band;
+  assert.equal(grpFor(30, 30), 'launch', '900 GRPs is launch weight');
+  assert.equal(grpFor(10, 55), 'maintenance', '550 GRPs is maintenance weight');
+  assert.equal(grpFor(5, 20), 'light', '100 GRPs is light');
+  assert.equal(summarise([]).weight_band, 'none');
+});
+
 test('summarise copes with an empty schedule', () => {
   const totals = summarise([]);
   assert.equal(totals.total_spots, 0);
+  assert.equal(totals.total_grp, 0);
   assert.deepEqual(totals.channels, []);
 });
 

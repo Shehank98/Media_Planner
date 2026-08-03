@@ -209,31 +209,53 @@ export function summarise(lines) {
   let spots = 0;
   let cost = 0;
   let costedSpots = 0;
+  let grp = 0;
 
   for (const line of lines) {
     const entry = byChannel.get(line.channel_name)
-      || { channel_name: line.channel_name, spots: 0, cost_lkr: 0, lines: 0, uncosted_lines: 0 };
+      || { channel_name: line.channel_name, spots: 0, cost_lkr: 0, grp: 0, lines: 0, uncosted_lines: 0 };
     entry.spots += line.spots || 0;
     entry.lines += 1;
+    // GRPs = TVR x spots (Media Training: total campaign weight). Only lines
+    // that carry a TVR contribute; the rest add spots but no measurable weight.
+    const lineGrp = (Number(line.tvr) || 0) * (line.spots || 0);
+    entry.grp += lineGrp;
     if (line.cost_lkr === null || line.cost_lkr === undefined) entry.uncosted_lines += 1;
     else entry.cost_lkr += line.cost_lkr;
     byChannel.set(line.channel_name, entry);
 
     spots += line.spots || 0;
+    grp += lineGrp;
     if (line.cost_lkr !== null && line.cost_lkr !== undefined) {
       cost += line.cost_lkr;
       costedSpots += line.spots || 0;
     }
   }
 
+  for (const entry of byChannel.values()) entry.grp = +entry.grp.toFixed(1);
+
   return {
     channels: [...byChannel.values()].sort((a, b) => b.spots - a.spots),
     total_spots: spots,
     total_cost_lkr: Math.round(cost),
     total_cost_lakhs: +(cost / 100_000).toFixed(2),
+    total_grp: +grp.toFixed(1),
+    weight_band: weightBand(grp),
     costed_spots: costedSpots,
     uncosted_spots: spots - costedSpots,
   };
+}
+
+/**
+ * Grade total GRPs against the workshop's weight benchmarks: a launch burst runs
+ * ~850-900 GRPs, a maintenance campaign ~500-600. This tells a planner at a
+ * glance whether the buy carries launch-level or sustaining weight.
+ */
+export function weightBand(grp) {
+  if (!grp) return 'none';
+  if (grp >= 800) return 'launch';
+  if (grp >= 450) return 'maintenance';
+  return 'light';
 }
 
 /** Every date the schedule touches, in order - the grid's column headers. */

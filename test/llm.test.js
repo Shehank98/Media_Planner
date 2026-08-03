@@ -155,6 +155,18 @@ test('the system prompt carries the Sri Lanka market context and doctrine', () =
   assert.match(SYSTEM_PROMPT, /only channels, programmes and costs present in the supplied data|only those present in the supplied data/);
 });
 
+test('the system prompt carries the planning method, metrics and benchmarks', () => {
+  assert.match(SYSTEM_PROMPT, /PLANNING METHOD & METRICS/);
+  assert.match(SYSTEM_PROMPT, /CPRP = spot cost \/ programme TVR/);
+  assert.match(SYSTEM_PROMPT, /GRPs = TVR x spots/);
+  assert.match(SYSTEM_PROMPT, /850-900 GRPs/);
+  assert.match(SYSTEM_PROMPT, /500-600 GRPs/);
+  // The four scheduling patterns.
+  for (const pat of ['Burst', 'Continuous', 'Flighting', 'Pulsing']) {
+    assert.ok(SYSTEM_PROMPT.includes(pat), `scheduling pattern ${pat} is present`);
+  }
+});
+
 test('the system prompt asks for channels before programmes', () => {
   assert.match(SYSTEM_PROMPT, /choose the CHANNELS first/);
   assert.match(SYSTEM_PROMPT, /smallest number of channels/);
