@@ -17,6 +17,7 @@
 
 <nav class="tabs wrap" role="tablist">
   <button class="tab active" data-tab="plan" role="tab" aria-selected="true">Plan</button>
+  <button class="tab" data-tab="competitors" role="tab" aria-selected="false">Competitors</button>
   <button class="tab" data-tab="data" role="tab" aria-selected="false">Data</button>
   <button class="tab" data-tab="settings" role="tab" aria-selected="false">Settings</button>
 </nav>
@@ -108,6 +109,37 @@
       </div>
       <div id="download-out" class="result"></div>
       <div id="plan-out"></div>
+    </section>
+  </div>
+
+  <!-- ==================== COMPETITORS ==================== -->
+  <div id="panel-competitors" class="panel" hidden>
+    <section class="card">
+      <div class="card-head"><h2>Competitor analysis</h2></div>
+      <p class="hint">
+        Pick your brand and its competitors from the monitored media watch data, then see how they
+        spend: share of spend and voice, prime vs non prime, value additions vs spots, and the split
+        by channel and programme. Numbers are straight from the uploaded data.
+      </p>
+
+      <div class="ca-controls">
+        <div class="ca-dates">
+          <label>From <input type="date" id="ca-from"></label>
+          <label>To <input type="date" id="ca-to"></label>
+          <button id="ca-reload" class="ghost small-btn" type="button">Load advertisers</button>
+        </div>
+        <div class="ca-picker">
+          <input id="ca-search" placeholder="Search advertiser" autocomplete="off">
+          <div id="ca-list" class="ca-list"></div>
+        </div>
+        <div id="ca-selected" class="ca-selected"></div>
+        <div class="actions">
+          <button id="ca-run" class="primary" type="button">Run analysis</button>
+          <button id="ca-csv" class="ghost" type="button" hidden>Export CSV</button>
+          <span id="ca-status" class="saved"></span>
+        </div>
+      </div>
+      <div id="ca-out" class="result"></div>
     </section>
   </div>
 
@@ -220,5 +252,6 @@
 </footer>
 
 <script src="/app.js"></script>
+<script src="/competitors.js"></script>
 </body>
 </html>
