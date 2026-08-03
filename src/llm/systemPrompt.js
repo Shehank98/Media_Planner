@@ -11,6 +11,12 @@
 // Two things are deliberately NOT asked of the model, because they are
 // arithmetic and get verified in code instead: placing spots on specific dates
 // (schedule.js) and totalling the cost against the budget (schema.js).
+//
+// The Sri Lanka market context and spot-distribution doctrine the planner works
+// from lives in planningKnowledge.js and is appended below, so it is edited in
+// one place and travels to both providers with the prompt.
+
+import { PLANNING_KNOWLEDGE } from './planningKnowledge.js';
 
 export const SYSTEM_PROMPT = `You are a senior media analyst and media buying professional at a Sri Lankan media agency,
 specializing in TV planning and buying. You think and write the way an experienced planner would
@@ -98,4 +104,6 @@ Rules:
 }
 
 Do not output a date-by-date schedule; the spots you give per programme are placed across the
-campaign dates automatically. No text outside the JSON object.`;
+campaign dates automatically. No text outside the JSON object.
+
+${PLANNING_KNOWLEDGE}`;

@@ -144,6 +144,17 @@ test('the system prompt keeps the planner framing and demands strict JSON', () =
   assert.match(SYSTEM_PROMPT, /"confidence": "high\|medium\|low"/);
 });
 
+test('the system prompt carries the Sri Lanka market context and doctrine', () => {
+  // The 2024/25 landscape knowledge must travel with the prompt so every plan
+  // reasons with it, without loosening grounding.
+  assert.match(SYSTEM_PROMPT, /MARKET CONTEXT & PLANNING DOCTRINE/);
+  assert.match(SYSTEM_PROMPT, /DUOPOLY/);
+  assert.match(SYSTEM_PROMPT, /weekdays and weekends/);
+  assert.match(SYSTEM_PROMPT, /Derana indexes urban/);
+  // It reasserts, not relaxes, grounding.
+  assert.match(SYSTEM_PROMPT, /only channels, programmes and costs present in the supplied data|only those present in the supplied data/);
+});
+
 test('the system prompt asks for channels before programmes', () => {
   assert.match(SYSTEM_PROMPT, /choose the CHANNELS first/);
   assert.match(SYSTEM_PROMPT, /smallest number of channels/);
