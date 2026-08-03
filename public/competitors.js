@@ -257,9 +257,23 @@ function renderAnalysis(r) {
 
   out.append(grid);
 
-  // The numbers behind the charts.
-  out.append(el('h3', {}, 'Every advertiser, in numbers'));
-  out.append(table(
+  // Channel and programme spend, visualised and coloured by advertiser.
+  const advColors = assignAdvColors(ads);
+  if ((r.by_channel || []).length) {
+    out.append(chartCard('Where the money goes: top channels by spend',
+      categorySpendChart(r.by_channel, 'channel_name', advColors, 14), advLegend(advColors)));
+    out.append(chartCard('How wide each advertiser spreads (channels used)',
+      spreadChart(r, advColors), advLegend(advColors)));
+  }
+  if ((r.by_program || []).length) {
+    out.append(chartCard('Top programmes by spend',
+      categorySpendChart(r.by_program, 'programme_name', advColors, 16), advLegend(advColors)));
+  }
+
+  // The full numbers, available but out of the way.
+  const details = el('details', { class: 'ca-tables' }, el('summary', {}, 'Show the numbers'));
+  details.append(el('h3', {}, 'Every advertiser'));
+  details.append(table(
     ['Advertiser', 'Ads', 'Cost', 'SOV %', 'SOS %', 'Value add', 'Spot', 'PT ads', 'Non-PT ads'],
     ads.map((a) => [
       a.advertiser + brandBadge(a), fmt(a.ads), money(a.cost),
@@ -268,18 +282,17 @@ function renderAnalysis(r) {
     ]),
     [1, 2, 3, 4, 5, 6, 7, 8],
   ));
-
-  // By channel and by programme.
   if ((r.by_channel || []).length) {
-    out.append(el('h3', {}, 'By channel'));
-    out.append(table(['Advertiser', 'Channel', 'Ads', 'Cost'],
+    details.append(el('h3', {}, 'By channel'));
+    details.append(table(['Advertiser', 'Channel', 'Ads', 'Cost'],
       r.by_channel.map((x) => [x.advertiser, x.channel_name, fmt(x.ads), money(x.cost)]), [2, 3]));
   }
   if ((r.by_program || []).length) {
-    out.append(el('h3', {}, 'By programme'));
-    out.append(table(['Advertiser', 'Channel', 'Programme', 'Ads', 'Cost'],
-      r.by_program.slice(0, 40).map((x) => [x.advertiser, x.channel_name, x.programme_name, fmt(x.ads), money(x.cost)]), [3, 4]));
+    details.append(el('h3', {}, 'By programme'));
+    details.append(table(['Advertiser', 'Channel', 'Programme', 'Ads', 'Cost'],
+      r.by_program.slice(0, 60).map((x) => [x.advertiser, x.channel_name, x.programme_name, fmt(x.ads), money(x.cost)]), [3, 4]));
   }
+  out.append(details);
 }
 
 // --- chart primitives (HTML/CSS bars) --------------------------------------
@@ -327,6 +340,60 @@ function stackedChart(rows, fmtVal = money) {
           })),
         el('span', { class: 'ca-barval' }, fmtVal(total)));
     }));
+}
+
+// Advertiser colours: your brand is always orange; competitors take blue then
+// magenta in a stable (sorted) order, and any beyond fold into a neutral grey.
+const ADV_PALETTE = ['#2C7FB8', '#B5468A'];
+function assignAdvColors(advertisers) {
+  const map = new Map();
+  if (CA.myBrand) map.set(CA.myBrand, CA_COLOR.brand);
+  advertisers.map((a) => a.advertiser).filter((n) => n !== CA.myBrand).sort()
+    .forEach((n, i) => map.set(n, ADV_PALETTE[i] ?? '#8A93A0'));
+  return map;
+}
+
+function advLegend(advColors) {
+  return legend([...advColors.entries()].map(([n, c]) => [n === CA.myBrand ? `${n} ★` : n, c]));
+}
+
+/** Top categories (channel or programme) by spend, stacked by advertiser. */
+function categorySpendChart(rows, keyField, advColors, limit) {
+  const byCat = new Map();
+  for (const x of rows) {
+    const k = x[keyField];
+    const e = byCat.get(k) || { total: 0, segs: new Map() };
+    e.total += x.cost;
+    e.segs.set(x.advertiser, (e.segs.get(x.advertiser) || 0) + x.cost);
+    byCat.set(k, e);
+  }
+  const catRows = [...byCat.entries()]
+    .sort((a, b) => b[1].total - a[1].total).slice(0, limit)
+    .map(([label, e]) => ({
+      label,
+      segments: [...e.segs.entries()].sort((a, b) => b[1] - a[1]).map(([adv, cost]) => ({
+        key: adv, value: cost, color: advColors.get(adv) || '#8A93A0',
+        hover: `${adv}: LKR ${money(cost)}`,
+      })),
+    }));
+  return stackedChart(catRows, money);
+}
+
+/** How many distinct channels each advertiser uses - spread vs concentration. */
+function spreadChart(r, advColors) {
+  const count = new Map();
+  for (const x of r.by_channel) {
+    if (!count.has(x.advertiser)) count.set(x.advertiser, new Set());
+    count.get(x.advertiser).add(x.channel_name);
+  }
+  const rows = r.advertisers
+    .map((a) => ({ adv: a.advertiser, n: count.get(a.advertiser)?.size || 0 }))
+    .sort((a, b) => b.n - a.n)
+    .map((x) => ({
+      label: x.adv === CA.myBrand ? `${x.adv} ★` : x.adv, pct: x.n,
+      color: advColors.get(x.adv) || '#8A93A0', valueText: `${x.n} channels`,
+    }));
+  return barChart(rows);
 }
 
 /** A Cost / Ad-count toggle button for the split charts. */

@@ -351,6 +351,15 @@ h3 { font-size: 13.5px; margin: 18px 0 4px; text-transform: uppercase; letter-sp
 .ca-seg { position: relative; display: flex; align-items: center; justify-content: center; }
 .ca-seglabel { font-size: 10.5px; color: #fff; font-weight: 700; }
 
+/* full-width charts (channels, programmes) sit below the summary grid */
+#ca-out > .ca-chart { margin: 14px 0; }
+#ca-out > .ca-chart .ca-barlabel { max-width: 180px; }
+.ca-tables { margin-top: 16px; }
+.ca-tables > summary {
+  cursor: pointer; font-size: 13px; font-weight: 600; color: var(--accent-dark);
+  padding: 8px 0;
+}
+
 /* written analysis */
 .ca-analysis {
   border: 1px solid var(--line); border-left: 3px solid var(--accent);
