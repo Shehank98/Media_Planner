@@ -4,7 +4,9 @@ import {
   listImportBatches, deleteImportBatch, restoreImportBatch, deleteRows,
   listThemes, setThemeCategory, loadDaypartBoundaries, setDaypartBoundary, tagRows,
 } from '../services/workflow/repo.js';
-import { listAdvertisers, competitorBehaviour } from '../services/workflow/analytics.js';
+import {
+  listAdvertisers, competitorBehaviour, topChannels, programmeBasket,
+} from '../services/workflow/analytics.js';
 
 export const router = express.Router();
 
@@ -26,6 +28,23 @@ router.post('/competitor-analysis', asyncRoute(async (req, res) => {
     return res.status(400).json({ error: 'Pick your advertiser and at least one competitor.' });
   }
   res.json(await competitorBehaviour({ advertisers, channel: channel || null, from: from || null, to: to || null }));
+}));
+
+/** Step 3: top channels by Share of Audience, with per-channel competitor detail. */
+router.post('/top-channels', asyncRoute(async (req, res) => {
+  const { advertisers = [], limit, from, to } = req.body || {};
+  res.json(await topChannels({
+    advertisers, limit: limit || 10, from: from || null, to: to || null,
+  }));
+}));
+
+/** Step 4: the programme basket for the chosen channels, split PT / Non-PT. */
+router.post('/programme-basket', asyncRoute(async (req, res) => {
+  const { channels = [], advertisers = [], from, to } = req.body || {};
+  if (!Array.isArray(channels) || !channels.length) {
+    return res.status(400).json({ error: 'Select at least one channel to build a basket.' });
+  }
+  res.json(await programmeBasket({ channels, advertisers, from: from || null, to: to || null }));
 }));
 
 // --- data management -------------------------------------------------------
