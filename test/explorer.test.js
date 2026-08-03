@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { explainSchedule } from '../src/llm/index.js';
+import { explainSchedule, explainCompetitors } from '../src/llm/index.js';
 import { checkPlanClutter } from '../src/services/clutter.js';
 
 // The explorer's schedule step must not depend on a model being reachable: if
@@ -59,6 +59,24 @@ test('explainSchedule fallback returns a note per channel with its share', async
   assert.ok(derana, 'Derana note present');
   assert.match(derana.note, /22\.5% share/);
   assert.match(derana.note, /31\.2% of GRP/);
+});
+
+test('explainCompetitors falls back to a grounded read when no provider answers', async () => {
+  const payload = {
+    brand: 'Fizz',
+    advertisers: [
+      { name: 'Fizz', is_brand: true, ads: 100, cost: 5_000_000, sov: 30, sos: 25, value_addition_ads: 10, spot_ads: 90, pt_cost: 4_000_000, non_pt_cost: 1_000_000 },
+      { name: 'Rival A', is_brand: false, ads: 200, cost: 12_000_000, sov: 60, sos: 60, value_addition_ads: 5, spot_ads: 195, pt_cost: 11_000_000, non_pt_cost: 1_000_000 },
+    ],
+    top_channels: [{ name: 'Derana', total: 9_000_000 }],
+    top_programmes: [{ name: 'Dream Star', total: 4_000_000 }],
+  };
+  const out = await explainCompetitors(payload, { provider: 'no-such-provider' });
+  assert.equal(out.source, 'fallback');
+  assert.match(out.headline, /Fizz/);
+  assert.match(out.headline, /Rival A/, 'names the leader it trails');
+  assert.ok(out.recommendations.length >= 1, 'gives at least one recommendation');
+  assert.ok(out.key_inputs.some((k) => /SOS/.test(k)), 'cites the figures it used');
 });
 
 test('the clutter check reads the belt from time_band, as schedule lines carry it', () => {

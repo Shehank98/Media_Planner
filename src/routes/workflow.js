@@ -7,6 +7,7 @@ import {
 import {
   listAdvertisers, competitorBehaviour, topChannels, programmeBasket,
 } from '../services/workflow/analytics.js';
+import { explainCompetitors } from '../llm/index.js';
 
 export const router = express.Router();
 
@@ -29,6 +30,43 @@ router.post('/competitor-analysis', asyncRoute(async (req, res) => {
   }
   res.json(await competitorBehaviour({ advertisers, channel: channel || null, from: from || null, to: to || null }));
 }));
+
+/** An AI decision read over the competitor numbers (Section 8 transparency). */
+router.post('/competitor-analysis/insight', asyncRoute(async (req, res) => {
+  const { advertisers, myBrand, channel, from, to, provider } = req.body || {};
+  if (!Array.isArray(advertisers) || !advertisers.length) {
+    return res.status(400).json({ error: 'Pick your advertiser and at least one competitor.' });
+  }
+  const data = await competitorBehaviour({
+    advertisers, channel: channel || null, from: from || null, to: to || null,
+  });
+  const payload = {
+    brand: myBrand || advertisers[0],
+    period: { from: from || null, to: to || null },
+    advertisers: data.advertisers.map((a) => ({
+      name: a.advertiser, is_brand: a.advertiser === (myBrand || advertisers[0]),
+      ads: a.ads, cost: a.cost, sov: a.share_of_voice_pct, sos: a.share_of_spend_pct,
+      value_addition_ads: a.value_addition.ads, spot_ads: a.spot.ads,
+      pt_cost: a.pt.cost, non_pt_cost: a.non_pt.cost,
+    })),
+    top_channels: topByCost(data.by_channel, 'channel_name', 10),
+    top_programmes: topByCost(data.by_program, 'programme_name', 10),
+  };
+  const insight = await explainCompetitors(payload, { provider });
+  res.json({ ...insight, set_totals: data.set_totals });
+}));
+
+function topByCost(rows, keyField, limit) {
+  const m = new Map();
+  for (const x of rows || []) {
+    const k = x[keyField];
+    const e = m.get(k) || { name: k, total: 0, top_advertiser: null, top_cost: 0 };
+    e.total += Number(x.cost) || 0;
+    if ((Number(x.cost) || 0) > e.top_cost) { e.top_cost = Number(x.cost) || 0; e.top_advertiser = x.advertiser; }
+    m.set(k, e);
+  }
+  return [...m.values()].sort((a, b) => b.total - a.total).slice(0, limit);
+}
 
 /** Step 3: top channels by Share of Audience, with per-channel competitor detail. */
 router.post('/top-channels', asyncRoute(async (req, res) => {

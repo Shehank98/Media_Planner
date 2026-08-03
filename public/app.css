@@ -327,38 +327,75 @@ h3 { font-size: 13.5px; margin: 18px 0 4px; text-transform: uppercase; letter-sp
 .ca-chip .x { cursor: pointer; opacity: .7; font-weight: 700; }
 .ca-chip .x:hover { opacity: 1; }
 
-.ca-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin: 12px 0 6px; }
-.ca-chart { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
-.ca-chart h4 { margin: 0 0 10px; font-size: 13.5px; color: var(--ink); }
-
-.ca-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; font-size: 12px; color: #4a515a; }
-.ca-leg { display: inline-flex; align-items: center; gap: 5px; }
-.ca-swatch { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
-
-.ca-bars { display: flex; flex-direction: column; gap: 7px; }
-.ca-barrow { display: grid; grid-template-columns: 120px 1fr auto; align-items: center; gap: 9px; }
-.ca-barlabel {
-  font-size: 12px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+.ca-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 14px; margin: 12px 0 6px; }
+.ca-chart {
+  border: 1px solid var(--line); border-radius: 10px; padding: 15px 18px 12px;
+  background: #fff; box-shadow: 0 1px 2px rgba(20, 28, 40, .04);
 }
-.ca-track { background: #eef1f4; border-radius: 5px; height: 16px; overflow: hidden; }
-.ca-fill { height: 100%; border-radius: 5px; min-width: 3px; transition: width .25s ease; }
-.ca-stack { display: flex; gap: 2px; background: transparent; }
-.ca-seg { height: 16px; border-radius: 3px; min-width: 2px; }
-.ca-seg:first-child { border-top-left-radius: 5px; border-bottom-left-radius: 5px; }
-.ca-seg:last-child { border-top-right-radius: 5px; border-bottom-right-radius: 5px; }
-.ca-barval { font-size: 12px; color: #4a515a; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ca-chart-h {
+  margin: 0 0 14px; font-size: 12px; font-weight: 600; letter-spacing: .3px;
+  text-transform: uppercase; color: var(--muted);
+}
 
-.ca-seg { position: relative; display: flex; align-items: center; justify-content: center; }
-.ca-seglabel { font-size: 10.5px; color: #fff; font-weight: 700; }
+.ca-legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 12px; font-size: 11.5px; color: #4a515a; }
+.ca-leg { display: inline-flex; align-items: center; gap: 6px; }
+.ca-swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+
+/* horizontal bar chart with a shared axis + gridlines */
+.ca-plot { --lab: 168px; --val: 84px; position: relative; padding-bottom: 20px; }
+.ca-grid { position: absolute; left: var(--lab); right: var(--val); top: 0; bottom: 20px; pointer-events: none; }
+.ca-grid span { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line); }
+.ca-axis { position: absolute; left: var(--lab); right: var(--val); bottom: 0; height: 16px; }
+.ca-axis span { position: absolute; transform: translateX(-50%); font-size: 10px; color: var(--muted); white-space: nowrap; }
+.ca-axis span:first-child { transform: none; }
+.ca-axis span:last-child { transform: translateX(-100%); }
+
+.ca-prow { display: grid; grid-template-columns: var(--lab) 1fr var(--val); align-items: center; height: 28px; }
+.ca-prow .lab {
+  font-size: 12px; color: var(--ink); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; padding-right: 12px;
+}
+.ca-prow .cell { position: relative; height: 15px; }
+.ca-prow .fl { position: absolute; left: 0; top: 0; height: 100%; border-radius: 3px; min-width: 2px; transition: width .3s ease; }
+.ca-prow .stack { display: flex; gap: 2px; height: 100%; }
+.ca-prow .seg { height: 100%; border-radius: 2px; min-width: 2px; display: flex; align-items: center; justify-content: center; }
+.ca-prow .val { text-align: right; font-size: 12px; color: #3a424b; font-variant-numeric: tabular-nums; padding-left: 10px; }
+.seglab { font-size: 10px; color: #fff; font-weight: 600; }
 
 /* full-width charts (channels, programmes) sit below the summary grid */
 #ca-out > .ca-chart { margin: 14px 0; }
-#ca-out > .ca-chart .ca-barlabel { max-width: 180px; }
+#ca-out > .ca-chart .ca-plot { --lab: 200px; }
 .ca-tables { margin-top: 16px; }
 .ca-tables > summary {
   cursor: pointer; font-size: 13px; font-weight: 600; color: var(--accent-dark);
   padding: 8px 0;
 }
+
+/* AI recommendation card - visibly distinct from observed data */
+.ca-ai {
+  border: 1px solid #d7d3ec; border-left: 3px solid #6a4c93; border-radius: 10px;
+  padding: 14px 18px; margin: 6px 0 16px; background: #faf9fe;
+}
+.ca-ai-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ca-ai-badge {
+  background: #6a4c93; color: #fff; font-size: 10.5px; font-weight: 700; letter-spacing: .5px;
+  border-radius: 4px; padding: 2px 7px;
+}
+.ca-ai-title { font-weight: 700; font-size: 14px; color: var(--ink); }
+.ca-ai-src { margin-left: auto; font-size: 11px; color: #6a4c93; }
+.ca-ai-headline { font-size: 14.5px; font-weight: 600; color: var(--ink); margin: 10px 0 4px; }
+.ca-ai-reason { font-size: 13.5px; color: #2f363d; line-height: 1.55; margin: 4px 0 8px; }
+.ca-ai-sub { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; color: #6a4c93; margin: 10px 0 4px; }
+.ca-ai-list { margin: 4px 0; padding-left: 18px; }
+.ca-ai-list li { font-size: 13px; color: #2f363d; margin: 4px 0; line-height: 1.5; }
+.ca-ai-why { color: #4a515a; }
+.ca-ai-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 6px; }
+.ca-ai-col.opp .ca-ai-sub { color: #2f7d4f; }
+.ca-ai-col.thr .ca-ai-sub { color: #a13d33; }
+.ca-ai-inputs { margin-top: 10px; }
+.ca-ai-inputs > summary { cursor: pointer; font-size: 12px; color: #6a4c93; }
+.ca-ai-inputs li { font-size: 12px; color: #4a515a; }
+.ca-ai-foot { margin-top: 10px; font-size: 11px; color: var(--muted); font-style: italic; }
 
 /* written analysis */
 .ca-analysis {
@@ -401,6 +438,7 @@ h3 { font-size: 13.5px; margin: 18px 0 4px; text-transform: uppercase; letter-sp
 
 @media (max-width: 560px) {
   .ca-row { grid-template-columns: 1fr auto; }
-  .ca-barrow { grid-template-columns: 90px 1fr auto; }
+  .ca-plot { --lab: 104px; --val: 60px; }
+  #ca-out > .ca-chart .ca-plot { --lab: 120px; }
   .th-row { grid-template-columns: 1fr auto; }
 }

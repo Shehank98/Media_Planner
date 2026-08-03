@@ -228,4 +228,94 @@ function deterministicExplanation({ brief, schedule, totals, budget, clutter, co
 
 const str = (v) => (v === null || v === undefined ? '' : String(v).trim());
 
+// ---------------------------------------------------------------------------
+// Competitor analysis read.
+//
+// Turns the rolled-up monitoring numbers into a decision-focused brief for the
+// planner: where the brand stands, what each competitor is doing, and what to do
+// about it. The model only ever sees the aggregates. If no provider answers, a
+// deterministic read is built from the same numbers so the button always works.
+// ---------------------------------------------------------------------------
+
+const COMPETITOR_PROMPT = `You are a senior TV media analyst at a Sri Lankan media agency. You are given a competitor spend monitoring summary (from media watch) for a brand and its competitors over a period: per advertiser the ad count, monitored cost, share of voice and share of spend, value additions vs plain spots, and prime vs non-prime spend; plus the top channels and programmes by spend.
+
+Write a decision-focused read for the brand's planner - not a description of the numbers, but what they mean and what to do. Currency is LKR. Ground every point in the figures and name brands, channels and programmes. To grow share, a brand's share of voice should at least match its share-of-market ambition.
+
+Return ONLY this JSON:
+{
+  "headline": "one sentence: where the brand stands against the set",
+  "reasoning": "2-4 sentences explaining the competitive picture from the numbers",
+  "recommendations": [ { "action": "a specific thing to do", "rationale": "why, citing the numbers" } ],
+  "opportunities": [ "short point" ],
+  "threats": [ "short point" ],
+  "key_inputs": [ "the specific figures this read leaned on, e.g. 'Competitor X: 69% SOS, 74% of spend in prime'" ]
+}
+Keep it tight and specific. No text outside the JSON. Do not use em dashes.`;
+
+export async function explainCompetitors(payload, opts = {}) {
+  const provider = opts.provider || config.llm.provider;
+  try {
+    const adapter = getAdapter(provider);
+    if (typeof adapter.complete !== 'function') throw new Error('provider has no complete()');
+    const { raw, meta } = await adapter.complete({ system: COMPETITOR_PROMPT, user: payload });
+    return {
+      headline: str(raw.headline),
+      reasoning: str(raw.reasoning),
+      recommendations: arr(raw.recommendations).map((r) => ({ action: str(r.action), rationale: str(r.rationale) })).filter((r) => r.action),
+      opportunities: arr(raw.opportunities).map(str).filter(Boolean),
+      threats: arr(raw.threats).map(str).filter(Boolean),
+      key_inputs: arr(raw.key_inputs).map(str).filter(Boolean),
+      model_used: meta?.model_used || null,
+      source: 'model',
+    };
+  } catch (err) {
+    log.warn('explainCompetitors fell back to deterministic read', { provider, reason: err.message });
+    return { ...deterministicCompetitorRead(payload), source: 'fallback' };
+  }
+}
+
+const arr = (v) => (Array.isArray(v) ? v : []);
+
+function deterministicCompetitorRead(payload) {
+  const set = payload.advertisers || [];
+  const brand = set.find((a) => a.is_brand) || set[0];
+  if (!brand) return { headline: 'No monitored spend for this selection.', reasoning: '', recommendations: [], opportunities: [], threats: [], key_inputs: [], model_used: null };
+
+  const byCost = [...set].sort((a, b) => b.cost - a.cost);
+  const leader = byCost[0];
+  const pct = (n, d) => (d ? Math.round((n / d) * 100) : 0);
+  const ptShare = (a) => pct(a.pt_cost, a.pt_cost + a.non_pt_cost);
+  const vaShare = (a) => pct(a.value_addition_ads, a.ads);
+  const leads = leader.name === brand.name;
+
+  const headline = leads
+    ? `${brand.name} leads the set on spend (${brand.sos}% share of spend).`
+    : `${brand.name} trails ${leader.name} on spend (${brand.sos}% vs ${leader.sos}% share of spend).`;
+
+  const reasoning = `${leader.name} holds ${leader.sos}% of monitored spend and ${leader.sov}% of voice; `
+    + `it runs ${ptShare(leader)}% of its money in prime time. ${brand.name} runs ${ptShare(brand)}% in prime `
+    + `and ${vaShare(brand)}% of its ads as value additions.`;
+
+  const recs = [];
+  if (!leads) {
+    recs.push({ action: `Close the share-of-voice gap with ${leader.name}`, rationale: `You are ${leader.sos - brand.sos} points behind on spend; matching voice is needed to defend or grow share.` });
+  }
+  const primeHeavy = [...set].sort((a, b) => ptShare(b) - ptShare(a))[0];
+  if (primeHeavy && ptShare(brand) < ptShare(primeHeavy)) {
+    recs.push({ action: 'Review your prime-time weight', rationale: `${primeHeavy.name} puts ${ptShare(primeHeavy)}% in prime versus your ${ptShare(brand)}%; the evening peak is where the audience is.` });
+  }
+  const topCh = (payload.top_channels || [])[0];
+  if (topCh) recs.push({ action: `Assess presence on ${topCh.name}`, rationale: `${topCh.name} is the most-bought channel in the set (LKR ${Math.round(topCh.total).toLocaleString('en-US')}).` });
+
+  return {
+    headline,
+    reasoning,
+    recommendations: recs,
+    opportunities: topCh ? [`Concentrated competitor spend on ${topCh.name} - a shared battleground to contest or avoid.`] : [],
+    threats: leads ? [] : [`${leader.name} outspends you and could raise share of voice further.`],
+    key_inputs: set.map((a) => `${a.name}: ${a.sos}% SOS, ${a.sov}% SOV, ${ptShare(a)}% prime`),
+    model_used: null,
+  };
+}
+
 export { SYSTEM_PROMPT } from './systemPrompt.js';
