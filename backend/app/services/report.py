@@ -45,6 +45,7 @@ def gather(db: Session, product_groups: list[str], lead_advertiser: str | None) 
         "benchmark": ax.benchmark(db, product_groups, names),
         "value_addition": ax.value_addition(db, product_groups),
         "growth": market.growth(db, product_groups),
+        "category_split": market.top_categories(db, 10),
     }
 
     if lead_advertiser:
@@ -100,6 +101,10 @@ def build_charts(data: dict) -> dict[str, bytes]:
         names = [c["channel"] for c in cc]
         out["channels"] = charts.bar_chart(names, [c["spend"] for c in cc],
                                           title="Top channels by category spend", money=True, colors=ccols(names))
+    cs = data["category_split"]
+    if cs and len(cs) > 1:
+        out["categories"] = charts.bar_chart([c["category"] for c in cs], [c["spend"] for c in cs],
+                                             title="Spend by category", money=True, single_color=True)
     dd = data.get("deep_dive")
     if dd:
         if dd["trend"]["labels"]:
@@ -262,6 +267,14 @@ def build_html(db: Session, product_groups: list[str], lead_advertiser: str | No
 
     va = data["value_addition"]
 
+    # category breakdown block (only meaningful with >1 category)
+    cs = data["category_split"]
+    cat_block = ""
+    if cs and len(cs) > 1:
+        cat_rows = [[c["category"], _money(c["spend"]), c["advertisers"], f"{c['share_pct']}%"] for c in cs]
+        cat_block = (f'<h3>Category breakdown</h3>{_img(pngs.get("categories"))}'
+                     + _table(["Category", "Spend", "Advertisers", "Share"], cat_rows, [False, True, True, True]))
+
     parts = [f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Pitch Report - {html.escape(cat)}</title>
@@ -282,6 +295,7 @@ def build_html(db: Session, product_groups: list[str], lead_advertiser: str | No
 
 <section class="rp-sec"><h2>2. Category overview</h2>{p(s['category_overview'])}
   <div class="rp-grid">{_img(pngs.get('trend'))}{_img(pngs.get('medium'))}</div>
+  {cat_block}
 </section>
 
 <section class="rp-sec"><h2>3. Advertiser ranking (share of spend)</h2>{p(s['advertiser_ranking'])}
@@ -379,6 +393,12 @@ def build_pdf(db: Session, product_groups: list[str], lead_advertiser: str | Non
 
     story.append(Paragraph("1. Executive Summary", h2)); para(s["executive_summary"])
     story.append(Paragraph("2. Category Overview", h2)); para(s["category_overview"]); chart("trend"); chart("medium", 11)
+    cs = data["category_split"]
+    if cs and len(cs) > 1:
+        story.append(Paragraph("Category breakdown", ParagraphStyle("h3", parent=styles["Heading3"], textColor=navy)))
+        chart("categories")
+        table(["Category", "Spend", "Advertisers", "Share"],
+              [[c["category"], _money(c["spend"]), c["advertisers"], f"{c['share_pct']}%"] for c in cs])
     story.append(Paragraph("3. Advertiser Ranking", h2)); para(s["advertiser_ranking"]); chart("ranking")
     table(["Advertiser", "Total Spend", "Share"], [[a["advertiser"], _money(a["spend"]), f"{a['share_pct']}%"] for a in data["top_advertisers"]])
 
@@ -449,6 +469,11 @@ def build_docx(db: Session, product_groups: list[str], lead_advertiser: str | No
 
     doc.add_heading("1. Executive Summary", level=1); doc.add_paragraph(s["executive_summary"])
     doc.add_heading("2. Category Overview", level=1); doc.add_paragraph(s["category_overview"]); chart("trend"); chart("medium", 4.2)
+    cs = data["category_split"]
+    if cs and len(cs) > 1:
+        doc.add_heading("Category breakdown", level=2); chart("categories")
+        table(["Category", "Spend", "Advertisers", "Share"],
+              [[c["category"], _money(c["spend"]), c["advertisers"], f"{c['share_pct']}%"] for c in cs])
     doc.add_heading("3. Advertiser Ranking", level=1); doc.add_paragraph(s["advertiser_ranking"]); chart("ranking")
     table(["Advertiser", "Total Spend", "Share"], [[a["advertiser"], _money(a["spend"]), f"{a['share_pct']}%"] for a in data["top_advertisers"]])
 

@@ -130,15 +130,19 @@
       <section class="tab" id="tab3" hidden>
         <header class="page-head">
           <h1>Channel View</h1>
-          <p>Channel-first drill-down on the same Com-only adex data: who dominates a channel and on which programmes.</p>
+          <p>Channel-first drill-down: who dominates a channel, their paid (Com) spend and V/A bonus airtime, and how a chosen advertiser worked on that channel.</p>
         </header>
         <div class="card filters">
           <div class="field">
             <label>Channel</label>
             <select id="t3-channel"></select>
           </div>
+          <div class="field">
+            <label>Advertiser <span class="muted">(optional)</span></label>
+            <select id="t3-advertiser"><option value="">All advertisers</option></select>
+          </div>
           <div class="field field-actions">
-            <button class="btn primary" id="t3-run">View Channel</button>
+            <button class="btn primary" id="t3-run">View</button>
           </div>
         </div>
         <div id="t3-results" class="results"></div>

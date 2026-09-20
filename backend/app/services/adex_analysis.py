@@ -326,3 +326,82 @@ def advertiser_on_channel(db: Session, channel: str, advertiser: str, top=15) ->
         {"programme": p or "Unknown", "spend": round(s or 0, 2), "spots": n}
         for p, s, n in db.execute(stmt).all()
     ]
+
+
+def channel_advertisers_on(db: Session) -> dict:
+    """{channel: [advertisers]} used to populate the advertiser filter per channel."""
+    rows = db.execute(
+        select(AdexRow.channel, AdexRow.advertiser).where(
+            _where(AdexRow.channel.isnot(None), AdexRow.advertiser.isnot(None))
+        ).distinct()
+    ).all()
+    out: dict[str, set] = {}
+    for ch, adv in rows:
+        out.setdefault(ch, set()).add(adv)
+    return {ch: sorted(advs) for ch, advs in out.items()}
+
+
+def com_va(db: Session, channel: str | None = None, advertiser: str | None = None) -> dict:
+    """Com (paid) spend vs V/A (bonus airtime) for a channel, optionally scoped
+    to one advertiser. Com is money; V/A is free airtime, so it is reported as
+    spots + seconds, never blended into spend."""
+    conds = []
+    if channel:
+        conds.append(AdexRow.channel == channel)
+    if advertiser:
+        conds.append(AdexRow.advertiser == advertiser)
+
+    com_spend, com_spots, com_secs = db.execute(
+        select(func.sum(AdexRow.cost), func.count(), func.sum(AdexRow.dur)).where(_where(COM, *conds))
+    ).one()
+    va_spots, va_secs = db.execute(
+        select(func.count(), func.sum(AdexRow.dur)).where(_where(AdexRow.va_com == "V/A", *conds))
+    ).one()
+    return {
+        "com_spend": round(com_spend or 0, 2),
+        "com_spots": com_spots or 0,
+        "com_seconds": round(com_secs or 0, 1),
+        "va_spots": va_spots or 0,
+        "va_seconds": round(va_secs or 0, 1),
+    }
+
+
+def channel_advertisers(db: Session, channel: str, top=15) -> list[dict]:
+    """Advertisers on a channel with BOTH paid (Com) spend and V/A bonus."""
+    com = {
+        a: (round(s or 0, 2), n) for a, s, n in db.execute(
+            select(AdexRow.advertiser, func.sum(AdexRow.cost), func.count())
+            .where(_where(COM, AdexRow.channel == channel)).group_by(AdexRow.advertiser)
+        ).all() if a
+    }
+    va = {
+        a: (n, round(s or 0, 1)) for a, n, s in db.execute(
+            select(AdexRow.advertiser, func.count(), func.sum(AdexRow.dur))
+            .where(_where(AdexRow.va_com == "V/A", AdexRow.channel == channel)).group_by(AdexRow.advertiser)
+        ).all() if a
+    }
+    names = set(com) | set(va)
+    out = [
+        {
+            "advertiser": a,
+            "com_spend": com.get(a, (0, 0))[0],
+            "com_spots": com.get(a, (0, 0))[1],
+            "va_spots": va.get(a, (0, 0))[0],
+            "va_seconds": va.get(a, (0, 0))[1],
+        }
+        for a in names
+    ]
+    out.sort(key=lambda x: x["com_spend"], reverse=True)
+    return out[:top]
+
+
+def advertiser_channel_trend(db: Session, channel: str, advertiser: str) -> dict:
+    """Monthly Com spend for one advertiser on one channel (single line)."""
+    month = func.to_char(AdexRow.spot_date, "YYYY-MM")
+    rows = db.execute(
+        select(month, func.sum(AdexRow.cost))
+        .where(_where(COM, AdexRow.channel == channel, AdexRow.advertiser == advertiser, AdexRow.spot_date.isnot(None)))
+        .group_by(month).order_by(month)
+    ).all()
+    labels = [r[0] for r in rows]
+    return {"labels": labels, "series": {advertiser: [round(r[1] or 0, 2) for r in rows]}}

@@ -437,27 +437,65 @@ async function exportBasket() {
 // ---------------------------------------------------------------------------
 // TAB 3 - Channel View
 // ---------------------------------------------------------------------------
+let t3AdvByChannel = {};
 async function initTab3() {
-  try { fillSelect("#t3-channel", await api("/api/tab3/channels")); }
-  catch (e) { toast(e.message, true); }
+  try {
+    fillSelect("#t3-channel", await api("/api/tab3/channels"));
+    t3AdvByChannel = await api("/api/tab3/advertisers-by-channel");
+  } catch (e) { toast(e.message, true); }
+  $("#t3-channel").addEventListener("change", () => {
+    const advs = t3AdvByChannel[$("#t3-channel").value] || [];
+    fillSelect("#t3-advertiser", advs, { keepAll: true });
+  });
   $("#t3-run").addEventListener("click", runTab3);
+}
+
+function comVaStrip(cv) {
+  const strip = el("div", { class: "kpis" });
+  strip.append(kpiTile("Paid (Com) spend", money(cv.com_spend), `${num(cv.com_spots, 0)} spots`, true));
+  strip.append(kpiTile("Com airtime", `${num(cv.com_seconds, 0)}s`, "paid seconds"));
+  strip.append(kpiTile("V/A bonus spots", num(cv.va_spots, 0), "value addition"));
+  strip.append(kpiTile("V/A bonus airtime", `${num(cv.va_seconds, 0)}s`, "free, excluded from spend"));
+  return strip;
 }
 
 async function runTab3() {
   const channel = $("#t3-channel").value;
+  const advertiser = $("#t3-advertiser").value;
   if (!channel) return;
   const box = $("#t3-results");
   box.innerHTML = '<div class="card"><span class="spinner"></span> Loading…</div>';
   try {
+    if (advertiser) {
+      const d = await api("/api/tab3/advertiser-detail?" + qs({ channel, advertiser }));
+      box.innerHTML = "";
+      const head = el("div", { class: "card" });
+      head.append(el("div", { class: "section-title" }, `${advertiser} on ${channel}`));
+      head.append(el("div", { class: "cbody", style: "padding-bottom:0" }, comVaStrip(d.com_va)));
+      box.append(head);
+      box.append(chartCard(`${advertiser} monthly spend on ${channel}`, "/api/tab3/charts/advertiser-trend.png?" + qs({ channel, advertiser })));
+      box.append(dualCard(
+        chartFragment("Programmes used", "/api/tab3/charts/programmes.png?" + qs({ channel, advertiser })),
+        tableFragment("Programmes on this channel", ["Programme", "Spend", "Spots"],
+          d.programmes.map((p) => [p.programme, money(p.spend), p.spots]))
+      ));
+      return;
+    }
+
     const data = await api("/api/tab3/overview?" + qs({ channel }));
     box.innerHTML = "";
+    const cvCard = el("div", { class: "card" });
+    cvCard.append(el("div", { class: "section-title" }, `${channel}: paid vs bonus`));
+    cvCard.append(el("div", { class: "cbody", style: "padding-bottom:0" }, comVaStrip(data.com_va)));
+    box.append(cvCard);
+
     box.append(dualCard(
-      chartFragment("Top Advertisers", "/api/tab3/charts/advertisers.png?" + qs({ channel })),
-      tableFragment("Advertisers on channel", ["Advertiser", "Category", "Spend", "Spots"],
-        data.advertisers.map((a) => [a.advertiser, a.product_group || "-", money(a.spend), a.spots]))
+      chartFragment("Top advertisers (paid spend)", "/api/tab3/charts/advertisers.png?" + qs({ channel })),
+      tableFragment("Advertisers on channel", ["Advertiser", "Com spend", "Com spots", "V/A spots", "V/A secs"],
+        data.advertisers.map((a) => [a.advertiser, money(a.com_spend), a.com_spots, a.va_spots, num(a.va_seconds, 0)]))
     ));
     box.append(dualCard(
-      chartFragment("Top Programmes", "/api/tab3/charts/programmes.png?" + qs({ channel })),
+      chartFragment("Top programmes", "/api/tab3/charts/programmes.png?" + qs({ channel })),
       tableFragment("Programmes on channel", ["Programme", "Spend", "Spots"],
         data.programmes.map((p) => [p.programme, money(p.spend), p.spots]))
     ));
@@ -489,7 +527,7 @@ function tableFragment(title, headers, rows) {
   const f = document.createDocumentFragment();
   if (title) f.append(el("div", { class: "section-title" }, title));
   const table = el("table");
-  const numCols = headers.map((h) => /spend|share|tvr|reach|rate|cprp|spots|cost|before|after|Δ|delta/i.test(h));
+  const numCols = headers.map((h) => /spend|share|tvr|reach|rate|cprp|spots|cost|before|after|Δ|delta|secs|seconds|airtime/i.test(h));
   const swatchCol = headers.map((h) => NAME_HEADERS.test(h) || MEDIUM_HEADER.test(h));
   const isMedium = headers.map((h) => MEDIUM_HEADER.test(h));
   const thead = el("thead");

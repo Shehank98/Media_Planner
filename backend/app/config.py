@@ -40,7 +40,7 @@ class Settings:
         self.gemini_temperature: float = float(os.getenv("GEMINI_TEMPERATURE", "0.3"))
 
         # --- Uploads / jobs ----------------------------------------------
-        self.max_upload_mb: int = int(os.getenv("MAX_UPLOAD_MB", "50"))
+        self.max_upload_mb: int = int(os.getenv("MAX_UPLOAD_MB", "200"))
         # Where staged upload payloads live while awaiting review/confirm.
         # Defaults to a temp dir so it is writable on any host (staged payloads
         # are ephemeral and re-uploadable). Override with DATA_DIR for a

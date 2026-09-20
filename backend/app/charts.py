@@ -127,7 +127,8 @@ def bar_chart(labels, values, title="", xlabel="", ylabel="", money=False, horiz
             ax.margins(y=0.18)
         plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
         _despine(ax, keep_left=False, keep_bottom=True)
-    ax.set_title(title)
+    if title:
+        ax.set_title(title)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     return _finish(fig)
@@ -150,14 +151,17 @@ def stacked_bar(labels, series: dict[str, list], title="", ylabel="", money=Fals
     bottom = np.zeros(len(labels))
     names = list(series.keys())
     seg_colors = _colors(names, color_kind)
+    bar_w = 0.5 if len(labels) <= 3 else 0.72
     for i, (name, vals) in enumerate(series.items()):
         vals = np.array([v or 0 for v in vals], dtype=float)
-        ax.bar(labels, vals, bottom=bottom, label=name, color=seg_colors[i])
+        ax.bar(labels, vals, bottom=bottom, label=name, color=seg_colors[i], width=bar_w)
         bottom += vals
+    ax.margins(x=0.1)
     ax.grid(False); ax.grid(axis="y")
     if money:
         ax.yaxis.set_major_formatter(FuncFormatter(_thousands))
-    ax.set_title(title)
+    if title:
+        ax.set_title(title)
     ax.set_ylabel(ylabel)
     ax.legend(frameon=False, ncol=min(len(series), 4), fontsize=9)
     plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
@@ -188,14 +192,16 @@ def heatmap(rows, cols, matrix, title="", money=True) -> bytes:
                         color="white" if v > vmax * 0.55 else "#1f2933")
     cbar = fig.colorbar(im, ax=ax, shrink=0.8)
     cbar.ax.yaxis.set_major_formatter(FuncFormatter(_thousands))
-    ax.set_title(title)
+    if title:
+        ax.set_title(title)
     return _finish(fig)
 
 
 def _empty(title="") -> bytes:
     fig, ax = plt.subplots(figsize=(7, 2.6))
     ax.text(0.5, 0.5, "No data for this view yet", ha="center", va="center", color=MUTED, fontsize=12)
-    ax.set_title(title)
+    if title:
+        ax.set_title(title)
     ax.axis("off")
     return _finish(fig)
 
@@ -216,7 +222,8 @@ def line_chart(x, series: dict[str, list], title="", xlabel="", ylabel="", money
     ax.grid(False); ax.grid(axis="y")
     if money:
         ax.yaxis.set_major_formatter(FuncFormatter(_thousands))
-    ax.set_title(title)
+    if title:
+        ax.set_title(title)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     if len(series) > 1:
@@ -240,5 +247,6 @@ def pie_chart(labels, values, title="", color_kind="name", colors=None) -> bytes
         t.set_color("white")
         t.set_fontsize(9)
     ax.legend(wedges, labels, loc="center left", bbox_to_anchor=(1.0, 0.5), frameon=False, fontsize=10)
-    ax.set_title(title)
+    if title:
+        ax.set_title(title)
     return _finish(fig)
