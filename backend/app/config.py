@@ -7,6 +7,7 @@ filled in a full .env file.
 from __future__ import annotations
 
 import os
+import tempfile
 from functools import lru_cache
 
 
@@ -41,7 +42,12 @@ class Settings:
         # --- Uploads / jobs ----------------------------------------------
         self.max_upload_mb: int = int(os.getenv("MAX_UPLOAD_MB", "50"))
         # Where staged upload payloads live while awaiting review/confirm.
-        self.data_dir: str = os.getenv("DATA_DIR", os.path.join(os.getcwd(), "var"))
+        # Defaults to a temp dir so it is writable on any host (staged payloads
+        # are ephemeral and re-uploadable). Override with DATA_DIR for a
+        # persistent volume if desired.
+        self.data_dir: str = os.getenv(
+            "DATA_DIR", os.path.join(tempfile.gettempdir(), "media-planner-data")
+        )
 
         # --- Business defaults -------------------------------------------
         # Default prime-time window (24h clock). Adjustable at runtime via the

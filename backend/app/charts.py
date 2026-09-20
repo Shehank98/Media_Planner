@@ -10,6 +10,12 @@ consistent and professional.
 from __future__ import annotations
 
 import io
+import os
+import tempfile
+
+# matplotlib needs a writable config/font-cache dir. On some hosts (e.g. Railpack
+# on Railway) HOME may not be writable, so default it to a temp dir before import.
+os.environ.setdefault("MPLCONFIGDIR", os.path.join(tempfile.gettempdir(), "matplotlib"))
 
 import matplotlib
 
