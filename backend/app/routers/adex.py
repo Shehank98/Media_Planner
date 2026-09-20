@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
+from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 from .. import charts
@@ -129,6 +130,13 @@ def narrate(body: dict = Body(...), db: Session = Depends(get_db)):
 
 
 # --- Report export --------------------------------------------------------
+@router.get("/report/preview", response_class=HTMLResponse)
+def report_preview(product_groups: list[str] = Query(...), lead_advertiser: str | None = None, db: Session = Depends(get_db)):
+    if not product_groups:
+        raise HTTPException(400, "product_groups is required")
+    return HTMLResponse(report.build_html(db, product_groups, lead_advertiser))
+
+
 @router.post("/report")
 def report_export(body: dict = Body(...), db: Session = Depends(get_db)):
     pgs = body.get("product_groups") or []

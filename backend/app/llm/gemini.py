@@ -56,7 +56,8 @@ def narrate(logic_guide: str, format_guide: str, question: str, computed: dict) 
         f"{logic_guide}\n\n---\n{format_guide}\n\n---\n"
         "You are given a QUESTION and a COMPUTED RESULT (already calculated in "
         "Python from the database). Use ONLY the numbers in the computed result. "
-        "Do not invent, recompute, or add figures that are not present."
+        "Do not invent, recompute, or add figures that are not present. "
+        "Do not use em dashes or en dashes; use commas or a spaced hyphen."
     )
     user = f"QUESTION:\n{question}\n\nCOMPUTED RESULT (JSON):\n{json.dumps(computed, default=str)}"
     if not settings.gemini_api_key or genai is None:
@@ -65,6 +66,45 @@ def narrate(logic_guide: str, format_guide: str, question: str, computed: dict) 
         return _generate(system, user)
     except Exception as exc:  # noqa: BLE001
         return f"(AI narrative unavailable: {exc})\n\n" + _fallback_narrative(question, computed)
+
+
+def report_sections(logic_guide: str, format_guide: str, context: dict) -> dict:
+    """Return prose for each named report section as a JSON dict.
+
+    The model writes NARRATIVE ONLY - it must not describe charts or tables
+    (those are inserted programmatically) and must not invent numbers. Keys:
+    executive_summary, category_overview, advertiser_ranking, deep_dive,
+    channel_analysis, competitor, recommendation.
+    """
+    keys = [
+        "executive_summary", "category_overview", "advertiser_ranking",
+        "deep_dive", "channel_analysis", "competitor", "recommendation",
+    ]
+    if not settings.gemini_api_key or genai is None:
+        return {}
+    system = (
+        f"{logic_guide}\n\n---\n{format_guide}\n\n---\n"
+        "You write the narrative sections of a media pitch report. Rules:\n"
+        "- Use ONLY the numbers in the provided data. Never invent figures.\n"
+        "- Write PROSE ONLY. Do NOT describe, draw, or reference charts or "
+        "tables (they are added separately). Do not write '(chart showing ...)'.\n"
+        "- Do NOT use em dashes or en dashes; use commas, or a hyphen with spaces.\n"
+        "- Keep each section to 2-4 tight sentences.\n"
+        f"Return a single JSON object with exactly these keys: {', '.join(keys)}. "
+        "Each value is a plain-text paragraph. Return JSON only, no code fences."
+    )
+    user = "REPORT DATA (JSON):\n" + json.dumps(context, default=str)
+    try:
+        raw = _generate(system, user, temperature=0.3)
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        data = json.loads(raw)
+        return {k: _no_dashes(str(v)) for k, v in data.items() if k in keys}
+    except Exception:
+        return {}
+
+
+def _no_dashes(text: str) -> str:
+    return text.replace("—", " - ").replace("–", "-")
 
 
 def write_sql(logic_guide: str, schema_hint: str, question: str) -> str:
@@ -83,14 +123,57 @@ def write_sql(logic_guide: str, schema_hint: str, question: str) -> str:
     return sql
 
 
+def _money(v):
+    try:
+        return f"Rs. {float(v):,.0f}"
+    except (TypeError, ValueError):
+        return str(v)
+
+
 def _fallback_narrative(question: str, computed: dict) -> str:
-    """Deterministic summary when no API key is present - keeps the app usable."""
-    lines = [f"Summary for: {question}", ""]
-    for key, val in computed.items():
-        if isinstance(val, list) and val and isinstance(val[0], dict):
-            lines.append(f"{key}:")
-            for item in val[:5]:
-                lines.append("  - " + ", ".join(f"{k}={v}" for k, v in item.items()))
-        else:
-            lines.append(f"{key}: {val}")
-    return "\n".join(lines)
+    """Deterministic, readable summary when no API key is present. Produces
+    clean prose (never a raw data dump) so the UI stays presentable without
+    Gemini configured."""
+    parts: list[str] = []
+
+    ov = computed.get("overview")
+    if isinstance(ov, dict) and ov.get("total_spend") is not None:
+        line = f"Total market spend is {_money(ov['total_spend'])} across {ov.get('advertisers', 0)} advertisers and {ov.get('channels', 0)} channels"
+        if ov.get("date_from"):
+            line += f", from {ov['date_from']} to {ov['date_to']}"
+        line += "."
+        if ov.get("top_advertiser"):
+            line += f" {ov['top_advertiser']['name']} leads with {_money(ov['top_advertiser']['spend'])}."
+        ms = ov.get("medium_split") or {}
+        if ms:
+            top_m = max(ms.items(), key=lambda kv: kv[1])
+            total = sum(ms.values()) or 1
+            line += f" {top_m[0]} is the leading medium at {round(100 * top_m[1] / total)}% of spend."
+        parts.append(line)
+
+    ta = computed.get("top_advertisers")
+    if isinstance(ta, list) and ta:
+        lead = ta[0]
+        parts.append(f"The top advertiser is {lead.get('advertiser')} with {_money(lead.get('spend'))}"
+                     + (f", followed by {ta[1].get('advertiser')} ({_money(ta[1].get('spend'))})." if len(ta) > 1 else "."))
+
+    g = computed.get("growth")
+    if isinstance(g, dict):
+        if g.get("gainers"):
+            parts.append("Biggest gainers: " + ", ".join(f"{x['advertiser']} (+{_money(x['delta'])})" for x in g["gainers"][:3]) + ".")
+        if g.get("new_entrants"):
+            parts.append("New entrants this period: " + ", ".join(x["advertiser"] for x in g["new_entrants"][:3]) + ".")
+
+    ms = computed.get("medium_split")
+    if isinstance(ms, list) and ms:
+        parts.append("Spend by medium: " + ", ".join(f"{m['medium']} {_money(m['spend'])}" for m in ms) + ".")
+
+    va = computed.get("value_addition")
+    if isinstance(va, dict) and va.get("va_spots"):
+        parts.append(f"Bonus airtime (V/A, excluded from spend): {va['va_spots']:,} spots, {va.get('va_seconds', 0):,.0f} seconds.")
+
+    if not parts:
+        return ("AI narrative is not configured (no Gemini API key). The figures above are "
+                "computed and accurate; add a GEMINI_API_KEY to get a written analysis.")
+    parts.append("(Written summary shown; add a Gemini API key for a fuller AI analysis.)")
+    return "\n\n".join(parts)

@@ -1,205 +1,493 @@
-"""Pitch report generation - PDF (reportlab) and Word (python-docx).
+"""Pitch report generation - a properly organised document with REAL embedded
+charts (never text descriptions of charts) and AI-written narrative.
 
-Charts are rendered server-side via charts.py (matplotlib) and embedded into
-both formats so the exported document matches the in-app visuals. Narrative
-sections come from Gemini (narrative only - all numbers are pre-computed).
+Output formats: HTML (in-app preview), PDF (reportlab), Word (python-docx).
+All three share one data-gathering pass and one chart-building pass, so they
+are consistent. Numbers are computed in Python; the LLM only writes prose, and
+is instructed to avoid chart descriptions and em dashes.
 """
 from __future__ import annotations
 
+import base64
+import datetime as dt
+import html
 import io
 
 from sqlalchemy.orm import Session
 
 from .. import charts
 from ..llm import gemini, prompt_guide
-from . import adex_analysis, basket
+from . import adex_analysis as ax
+from . import basket, market
 
+# --------------------------------------------------------------------------
+# Data
+# --------------------------------------------------------------------------
+def gather(db: Session, product_groups: list[str], lead_advertiser: str | None) -> dict:
+    ov = market.overview(db, product_groups)
+    top_adv = ax.top_advertisers(db, product_groups, limit=12)
+    total = sum(a["spend"] for a in top_adv) or ov["total_spend"] or 0.0
+    for a in top_adv:
+        a["share_pct"] = round(100 * a["spend"] / total, 1) if total else 0.0
 
-def _gather(db: Session, product_groups: list[str], lead_advertiser: str | None) -> dict:
-    return {
+    names = [a["advertiser"] for a in top_adv[:6]]
+    data = {
         "product_groups": product_groups,
         "lead_advertiser": lead_advertiser,
-        "medium_split": adex_analysis.medium_split(db, product_groups),
-        "trend": adex_analysis.spend_trend(db, product_groups, by="month"),
-        "top_advertisers": adex_analysis.top_advertisers(db, product_groups, limit=10),
-        "sos_tv": adex_analysis.share_of_spend(db, product_groups, medium="TV", limit=5),
-        "value_addition": adex_analysis.value_addition(db, product_groups),
-        "competitor": adex_analysis.competitor_view(db, product_groups, lead_advertiser) if lead_advertiser else None,
+        "generated_on": dt.date.today().isoformat(),
+        "overview": ov,
+        "trend": ax.spend_trend(db, product_groups, by="month"),
+        "medium_split": ax.medium_split(db, product_groups),
+        "top_advertisers": top_adv,
+        "sos_tv": ax.share_of_spend(db, product_groups, medium="TV", limit=5),
+        "sov_trend": market.sov_trend(db, product_groups, top_n=5),
+        "category_channels": ax.category_channels(db, product_groups, limit=8),
+        "benchmark": ax.benchmark(db, product_groups, names),
+        "value_addition": ax.value_addition(db, product_groups),
+        "growth": market.growth(db, product_groups),
     }
 
+    if lead_advertiser:
+        data["deep_dive"] = {
+            "advertiser": lead_advertiser,
+            "trend": ax.spend_trend(db, product_groups, [lead_advertiser], by="month"),
+            "medium_split": ax.medium_split(db, product_groups, [lead_advertiser]),
+            "channels": ax.advertiser_channels(db, product_groups, lead_advertiser, 5),
+            "programmes": ax.advertiser_programmes(db, product_groups, lead_advertiser, 5),
+            "value_addition": ax.value_addition(db, product_groups, [lead_advertiser]),
+        }
 
-def _chart_pngs(data: dict) -> dict[str, bytes]:
+    # Recommended basket (only if TVR data exists)
+    progs = [p for p in basket.best_programmes(db, limit=40) if p.get("cprp") is not None]
+    progs.sort(key=lambda x: x["cprp"])
+    data["recommended_basket"] = progs[:8]
+    return data
+
+
+# --------------------------------------------------------------------------
+# Charts (built once, reused across formats)
+# --------------------------------------------------------------------------
+def build_charts(data: dict) -> dict[str, bytes]:
     out: dict[str, bytes] = {}
-    ms = data["medium_split"]
-    if ms:
-        out["medium"] = charts.bar_chart(
-            [m["medium"] for m in ms], [m["spend"] for m in ms],
-            title="Spend by Medium", money=True,
-        )
     tr = data["trend"]
     if tr["labels"]:
-        out["trend"] = charts.line_chart(
-            tr["labels"], tr["series"], title="Spend Trend", money=True,
-        )
+        out["trend"] = charts.line_chart(tr["labels"], tr["series"], title="Total Category Spend by Month", money=True)
+    ms = data["medium_split"]
+    if ms:
+        out["medium"] = charts.pie_chart([m["medium"] for m in ms], [m["spend"] for m in ms], title="Medium Split")
     ta = data["top_advertisers"]
     if ta:
-        out["top_adv"] = charts.bar_chart(
-            [a["advertiser"] for a in ta], [a["spend"] for a in ta],
-            title="Top Advertisers by Spend", money=True,
-        )
-    sos = data["sos_tv"]
-    if sos:
-        out["sos"] = charts.pie_chart(
-            [s["advertiser"] for s in sos], [s["share_pct"] for s in sos],
-            title="Top 5 Share of Spend - TV",
-        )
+        out["ranking"] = charts.bar_chart([a["advertiser"] for a in ta[:8]], [a["share_pct"] for a in ta[:8]],
+                                          title="Top Advertisers by Share of Spend (%)", single_color=True)
+    sov = data["sov_trend"]
+    if sov["labels"]:
+        out["sov"] = charts.line_chart(sov["labels"], sov["series"], title="Share of Voice Over Time (%)", ylabel="% of spend")
+    cc = data["category_channels"]
+    if cc:
+        out["channels"] = charts.bar_chart([c["channel"] for c in cc], [c["spend"] for c in cc],
+                                          title="Top Channels by Category Spend", money=True, single_color=True)
+    dd = data.get("deep_dive")
+    if dd:
+        if dd["trend"]["labels"]:
+            out["dd_trend"] = charts.line_chart(dd["trend"]["labels"], dd["trend"]["series"],
+                                                title=f"{dd['advertiser']} Spend by Month", money=True)
+        if dd["medium_split"]:
+            out["dd_medium"] = charts.pie_chart([m["medium"] for m in dd["medium_split"]],
+                                                [m["spend"] for m in dd["medium_split"]],
+                                                title=f"{dd['advertiser']} Medium Split")
+        if dd["channels"]:
+            out["dd_channels"] = charts.bar_chart([c["channel"] for c in dd["channels"]],
+                                                  [c["spend"] for c in dd["channels"]],
+                                                  title=f"{dd['advertiser']} Top Channels", money=True, single_color=True)
+    rb = data["recommended_basket"]
+    if rb:
+        out["cprp"] = charts.bar_chart([f"{p['programme']} ({p['channel']})" for p in rb],
+                                       [p["cprp"] for p in rb], title="Most Cost-Efficient Programmes (CPRP)")
     return out
 
 
-def _narrative(db: Session, data: dict) -> str:
-    logic = prompt_guide.get_logic(db)
-    fmt = prompt_guide.get_format(db)
-    q = (
-        f"Write a pitch narrative for category {data['product_groups']} "
-        + (f"with lead advertiser {data['lead_advertiser']}." if data["lead_advertiser"] else ".")
-    )
-    return gemini.narrate(logic, fmt, q, data)
+# --------------------------------------------------------------------------
+# Narrative (AI, with deterministic fallback)
+# --------------------------------------------------------------------------
+def _context_for_ai(data: dict) -> dict:
+    ov = data["overview"]
+    return {
+        "category": data["product_groups"],
+        "lead_advertiser": data["lead_advertiser"],
+        "total_spend": ov["total_spend"],
+        "date_range": [ov["date_from"], ov["date_to"]],
+        "medium_split": data["medium_split"],
+        "monthly_trend": data["trend"],
+        "top_advertisers": data["top_advertisers"][:6],
+        "share_of_voice": data["sov_trend"],
+        "growth": data["growth"],
+        "deep_dive": {k: v for k, v in (data.get("deep_dive") or {}).items() if k != "trend"},
+        "benchmark": data["benchmark"],
+        "recommended_basket": data["recommended_basket"][:5],
+        "value_addition": data["value_addition"],
+    }
 
 
+def get_sections(db: Session, data: dict) -> dict:
+    sections = gemini.report_sections(prompt_guide.get_logic(db), prompt_guide.get_format(db), _context_for_ai(data))
+    return {**_fallback_sections(data), **sections}  # AI overrides fallback where present
+
+
+def _money(v):
+    return f"Rs. {v:,.0f}" if v is not None else "n/a"
+
+
+def _fallback_sections(data: dict) -> dict:
+    ov = data["overview"]
+    cat = ", ".join(data["product_groups"])
+    ta = data["top_advertisers"]
+    lead = ta[0] if ta else None
+    second = ta[1] if len(ta) > 1 else None
+    ms = data["medium_split"]
+    top_medium = ms[0] if ms else None
+    total = ov["total_spend"] or 0
+
+    exec_s = f"The {cat} category recorded total advertising spend of {_money(total)} across TV, Radio and Press"
+    if ov["date_from"]:
+        exec_s += f" from {ov['date_from']} to {ov['date_to']}"
+    exec_s += "."
+    if lead:
+        exec_s += f" {lead['advertiser']} leads with {lead['share_pct']}% share ({_money(lead['spend'])})."
+    if second:
+        exec_s += f" {second['advertiser']} follows with {second['share_pct']}% ({_money(second['spend'])})."
+    if top_medium and total:
+        exec_s += f" {top_medium['medium']} dominates the media mix at {round(100*top_medium['spend']/total)}% of spend."
+
+    cat_s = "Spend is concentrated in " + (top_medium["medium"] if top_medium else "broadcast media") + \
+            f", which is the leading medium. The category spans {ov['advertisers']} advertisers across {ov['channels']} channels."
+    rank_s = "The ranking below shows each advertiser's share of category spend. " + \
+             (f"{lead['advertiser']} captures the largest share at {lead['share_pct']}%." if lead else "")
+
+    dd = data.get("deep_dive")
+    dd_s = ""
+    if dd:
+        dd_ms = dd["medium_split"][0] if dd["medium_split"] else None
+        dd_ch = dd["channels"][0] if dd["channels"] else None
+        dd_s = f"{dd['advertiser']} concentrated spend on " + \
+               (f"{dd_ms['medium']}" if dd_ms else "its lead medium") + \
+               (f", led by {dd_ch['channel']}." if dd_ch else ".")
+
+    ch = data["category_channels"]
+    ch_s = ("The strongest channels by category spend are " +
+            ", ".join(c["channel"] for c in ch[:3]) + ".") if ch else "No channel-level spend available."
+
+    comp_s = "The benchmark compares the leading advertisers on spend, medium mix and top channel/programme."
+    rb = data["recommended_basket"]
+    rec_s = ("The most cost-efficient programmes (lowest CPRP) are listed below, balancing rating delivery against cost." if rb
+             else "No TVR or rate card data is available yet, so a CPRP-based basket cannot be recommended.")
+
+    return {
+        "executive_summary": exec_s,
+        "category_overview": cat_s,
+        "advertiser_ranking": rank_s,
+        "deep_dive": dd_s,
+        "channel_analysis": ch_s,
+        "competitor": comp_s,
+        "recommendation": rec_s,
+    }
+
+
+# --------------------------------------------------------------------------
+# HTML report (in-app preview, self-contained with data-URI charts)
+# --------------------------------------------------------------------------
+def _img(png: bytes | None) -> str:
+    if not png:
+        return '<div class="rp-nodata">No data available for this chart.</div>'
+    b64 = base64.b64encode(png).decode()
+    return f'<img class="rp-chart" src="data:image/png;base64,{b64}" alt="chart" />'
+
+
+def _table(headers: list[str], rows: list[list], numeric: list[bool] | None = None) -> str:
+    if not rows:
+        return '<div class="rp-nodata">No data available.</div>'
+    numeric = numeric or [False] * len(headers)
+    th = "".join(f'<th class="{"num" if numeric[i] else ""}">{html.escape(str(h))}</th>' for i, h in enumerate(headers))
+    trs = ""
+    for r in rows:
+        tds = "".join(f'<td class="{"num" if numeric[i] else ""}">{html.escape(str(c))}</td>' for i, c in enumerate(r))
+        trs += f"<tr>{tds}</tr>"
+    return f'<table class="rp-table"><thead><tr>{th}</tr></thead><tbody>{trs}</tbody></table>'
+
+
+def build_html(db: Session, product_groups: list[str], lead_advertiser: str | None) -> str:
+    data = gather(db, product_groups, lead_advertiser)
+    pngs = build_charts(data)
+    s = get_sections(db, data)
+    ov = data["overview"]
+    cat = ", ".join(product_groups)
+    total = ov["total_spend"] or 0
+
+    def p(text):
+        return f'<p class="rp-narr">{html.escape(text)}</p>' if text else ""
+
+    # KPI strip
+    kpis = [
+        ("Total spend", _money(total)),
+        ("Advertisers", f"{ov['advertisers']:,}"),
+        ("Channels", f"{ov['channels']:,}"),
+        ("Date range", f"{ov['date_from'] or 'n/a'} to {ov['date_to'] or 'n/a'}"),
+    ]
+    if ov["top_advertiser"]:
+        kpis.append(("Leader", ov["top_advertiser"]["name"]))
+    kpi_html = "".join(f'<div class="rp-kpi"><span>{html.escape(l)}</span><strong>{html.escape(str(v))}</strong></div>' for l, v in kpis)
+
+    # ranking table
+    rank_rows = [[a["advertiser"], _money(a["spend"]), f"{a['share_pct']}%"] for a in data["top_advertisers"]]
+    rank_tbl = _table(["Advertiser", "Total spend", "Share"], rank_rows, [False, True, True])
+
+    # benchmark table
+    bm_rows = [[b["advertiser"], _money(b["spend"]), b["top_medium"] or "n/a", b["top_channel"] or "n/a", b["top_programme"] or "n/a"]
+               for b in data["benchmark"]]
+    bm_tbl = _table(["Advertiser", "Total spend", "Top medium", "Top channel", "Top programme"], bm_rows, [False, True, False, False, False])
+
+    va = data["value_addition"]
+
+    parts = [f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Pitch Report - {html.escape(cat)}</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet"/>
+<style>{_REPORT_CSS}</style></head><body><div class="rp">
+<header class="rp-cover">
+  <div class="rp-eyebrow">Media Analysis - Category Pitch Report</div>
+  <h1>{html.escape(cat)}</h1>
+  <div class="rp-meta">
+    <span>Advertisers: {html.escape(lead_advertiser or "All advertisers in category")}</span>
+    <span>Data range: {ov['date_from'] or 'n/a'} to {ov['date_to'] or 'n/a'}</span>
+    <span>Generated: {data['generated_on']}</span>
+  </div>
+  <div class="rp-kpis">{kpi_html}</div>
+</header>
+
+<section class="rp-sec"><h2>1. Executive summary</h2>{p(s['executive_summary'])}</section>
+
+<section class="rp-sec"><h2>2. Category overview</h2>{p(s['category_overview'])}
+  <div class="rp-grid">{_img(pngs.get('trend'))}{_img(pngs.get('medium'))}</div>
+</section>
+
+<section class="rp-sec"><h2>3. Advertiser ranking (share of spend)</h2>{p(s['advertiser_ranking'])}
+  {_img(pngs.get('ranking'))}
+  {rank_tbl}
+</section>"""]
+
+    dd = data.get("deep_dive")
+    if dd:
+        dd_prog = _table(["Programme", "Spend", "Spots"],
+                         [[x["programme"], _money(x["spend"]), x["spots"]] for x in dd["programmes"]], [False, True, True])
+        dd_chan = _table(["Channel", "Spend", "Spots"],
+                         [[x["channel"], _money(x["spend"]), x["spots"]] for x in dd["channels"]], [False, True, True])
+        parts.append(f"""<section class="rp-sec"><h2>4. Focus advertiser: {html.escape(dd['advertiser'])}</h2>{p(s['deep_dive'])}
+  <div class="rp-grid">{_img(pngs.get('dd_trend'))}{_img(pngs.get('dd_medium'))}</div>
+  <div class="rp-grid"><div><h3>Top channels</h3>{dd_chan}</div><div><h3>Top programmes</h3>{dd_prog}</div></div>
+  <p class="rp-narr rp-muted">Bonus value (V/A) attributed to {html.escape(dd['advertiser'])}: {dd['value_addition']['va_spots']:,} spots, {dd['value_addition']['va_seconds']:,.0f} seconds (excluded from spend).</p>
+</section>""")
+
+    parts.append(f"""<section class="rp-sec"><h2>{'5' if dd else '4'}. Channel analysis</h2>{p(s['channel_analysis'])}
+  {_img(pngs.get('channels'))}
+</section>
+
+<section class="rp-sec"><h2>{'6' if dd else '5'}. Competitor benchmark</h2>{p(s['competitor'])}
+  {bm_tbl}
+  {_img(pngs.get('sov'))}
+</section>
+
+<section class="rp-sec"><h2>{'7' if dd else '6'}. Recommended channel / programme basket</h2>{p(s['recommendation'])}
+  {_img(pngs.get('cprp'))}
+  {_table(["Channel", "Programme", "Avg TVR", "CPRP"], [[b['channel'], b['programme'], b['avg_tvr'], b['cprp']] for b in data['recommended_basket']], [False, False, True, True])}
+</section>
+
+<section class="rp-sec rp-appendix"><h2>{'8' if dd else '7'}. Appendix</h2>
+  <p class="rp-narr"><strong>Definitions.</strong> SOS (Share of Spend): an advertiser's percentage of total category spend.
+  CPRP (Cost Per Rating Point): 30-second-equivalent rate divided by TVR, measuring cost efficiency.
+  Com vs V/A: Com is paid commercial airtime; V/A is bonus airtime, excluded from all spend totals and rankings.</p>
+  <p class="rp-narr rp-muted">Category-wide value addition: {va['va_spots']:,} spots, {va['va_seconds']:,.0f} seconds of bonus airtime, reported separately and not included in any spend figure.</p>
+</section>
+<footer class="rp-foot">Generated by the Media Analysis System - figures computed in Python; narrative written by AI over those figures.</footer>
+</div></body></html>""")
+    return "".join(parts)
+
+
+# --------------------------------------------------------------------------
+# PDF
+# --------------------------------------------------------------------------
 def build_pdf(db: Session, product_groups: list[str], lead_advertiser: str | None) -> bytes:
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import cm
-    from reportlab.platypus import (
-        Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
-    )
+    from reportlab.platypus import (Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle)
 
-    data = _gather(db, product_groups, lead_advertiser)
-    pngs = _chart_pngs(data)
-    narrative = _narrative(db, data)
+    data = gather(db, product_groups, lead_advertiser)
+    pngs = build_charts(data)
+    s = get_sections(db, data)
+    ov = data["overview"]
+    cat = ", ".join(product_groups)
+
+    styles = getSampleStyleSheet()
+    navy = colors.HexColor("#1f3a5f")
+    title = ParagraphStyle("t", parent=styles["Title"], textColor=navy, fontSize=24, spaceAfter=6)
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"], textColor=navy, spaceBefore=14)
+    body = ParagraphStyle("b", parent=styles["BodyText"], fontSize=10.5, leading=15)
+    meta = ParagraphStyle("m", parent=styles["BodyText"], fontSize=9, textColor=colors.HexColor("#6b7684"))
+
+    story = [Paragraph("Category Pitch Report", title), Paragraph(cat, h2),
+             Paragraph(f"Advertisers: {lead_advertiser or 'All advertisers in category'}", meta),
+             Paragraph(f"Data range: {ov['date_from'] or 'n/a'} to {ov['date_to'] or 'n/a'} &nbsp;|&nbsp; Generated: {data['generated_on']}", meta),
+             Spacer(1, 0.4 * cm)]
+
+    def para(text):
+        if text:
+            story.append(Paragraph(html.escape(text), body))
+
+    def chart(key, w=15):
+        if key in pngs:
+            story.append(Image(io.BytesIO(pngs[key]), width=w * cm, height=w * 0.52 * cm, kind="proportional"))
+            story.append(Spacer(1, 0.25 * cm))
+
+    def table(headers, rows, numeric=None):
+        if not rows:
+            return
+        tdata = [headers] + rows
+        t = Table(tdata, hAlign="LEFT")
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), navy), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d7dbe0")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f4f6f8")]),
+            ("FONTSIZE", (0, 0), (-1, -1), 8.5), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        story.append(t)
+        story.append(Spacer(1, 0.3 * cm))
+
+    story.append(Paragraph("1. Executive Summary", h2)); para(s["executive_summary"])
+    story.append(Paragraph("2. Category Overview", h2)); para(s["category_overview"]); chart("trend"); chart("medium", 11)
+    story.append(Paragraph("3. Advertiser Ranking", h2)); para(s["advertiser_ranking"]); chart("ranking")
+    table(["Advertiser", "Total Spend", "Share"], [[a["advertiser"], _money(a["spend"]), f"{a['share_pct']}%"] for a in data["top_advertisers"]])
+
+    n = 4
+    dd = data.get("deep_dive")
+    if dd:
+        story.append(PageBreak())
+        story.append(Paragraph(f"4. Focus Advertiser: {dd['advertiser']}", h2)); para(s["deep_dive"])
+        chart("dd_trend"); chart("dd_medium", 11)
+        table(["Channel", "Spend", "Spots"], [[x["channel"], _money(x["spend"]), x["spots"]] for x in dd["channels"]])
+        table(["Programme", "Spend", "Spots"], [[x["programme"], _money(x["spend"]), x["spots"]] for x in dd["programmes"]])
+        n = 5
+
+    story.append(Paragraph(f"{n}. Channel Analysis", h2)); para(s["channel_analysis"]); chart("channels")
+    story.append(Paragraph(f"{n+1}. Competitor Benchmark", h2)); para(s["competitor"])
+    table(["Advertiser", "Spend", "Top Medium", "Top Channel"],
+          [[b["advertiser"], _money(b["spend"]), b["top_medium"] or "n/a", b["top_channel"] or "n/a"] for b in data["benchmark"]])
+    chart("sov")
+    story.append(Paragraph(f"{n+2}. Recommended Basket", h2)); para(s["recommendation"]); chart("cprp")
+    story.append(Paragraph(f"{n+3}. Appendix", h2))
+    para("SOS: advertiser share of total category spend. CPRP: 30s-equivalent rate / TVR. "
+         "Com is paid airtime; V/A is bonus airtime, excluded from all spend figures.")
+    va = data["value_addition"]
+    para(f"Category-wide value addition: {va['va_spots']:,} spots, {va['va_seconds']:,.0f} seconds of bonus airtime.")
 
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=1.6 * cm, bottomMargin=1.6 * cm)
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle("t", parent=styles["Title"], textColor=colors.HexColor("#1f3a5f"))
-    h2 = ParagraphStyle("h2", parent=styles["Heading2"], textColor=colors.HexColor("#1f3a5f"))
-    body = styles["BodyText"]
-
-    story = [
-        Paragraph("Category Pitch Analysis", title_style),
-        Paragraph("Category: " + ", ".join(product_groups), body),
-    ]
-    if lead_advertiser:
-        story.append(Paragraph("Lead advertiser: " + lead_advertiser, body))
-    story.append(Spacer(1, 0.4 * cm))
-
-    story.append(Paragraph("Narrative", h2))
-    for para in narrative.split("\n"):
-        if para.strip():
-            story.append(Paragraph(para.strip(), body))
-    story.append(Spacer(1, 0.4 * cm))
-
-    def add_chart(key, heading):
-        if key in pngs:
-            story.append(Paragraph(heading, h2))
-            story.append(Image(io.BytesIO(pngs[key]), width=16 * cm, height=8 * cm, kind="proportional"))
-            story.append(Spacer(1, 0.3 * cm))
-
-    add_chart("medium", "Medium Split")
-    add_chart("trend", "Spend Trend")
-    add_chart("top_adv", "Top Advertisers")
-    add_chart("sos", "Share of Spend")
-
-    # Top advertisers table
-    ta = data["top_advertisers"]
-    if ta:
-        story.append(Paragraph("Top Advertisers (table)", h2))
-        table_data = [["Advertiser", "Spend", "Spots"]] + [
-            [a["advertiser"], f"{a['spend']:,.0f}", a["spots"]] for a in ta
-        ]
-        tbl = Table(table_data, hAlign="LEFT")
-        tbl.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f3a5f")),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                    ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d7dbe0")),
-                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f4f6f8")]),
-                    ("FONTSIZE", (0, 0), (-1, -1), 9),
-                ]
-            )
-        )
-        story.append(tbl)
-
-    va = data["value_addition"]
-    story.append(Spacer(1, 0.3 * cm))
-    story.append(
-        Paragraph(
-            f"Bonus value received (V/A, excluded from spend): "
-            f"{va['va_spots']} spots / {va['va_seconds']:.0f} seconds.",
-            body,
-        )
-    )
-
-    doc.build(story)
+    SimpleDocTemplate(buf, pagesize=A4, topMargin=1.5 * cm, bottomMargin=1.5 * cm).build(story)
     buf.seek(0)
     return buf.read()
 
 
+# --------------------------------------------------------------------------
+# Word
+# --------------------------------------------------------------------------
 def build_docx(db: Session, product_groups: list[str], lead_advertiser: str | None) -> bytes:
     from docx import Document
     from docx.shared import Inches, Pt, RGBColor
 
-    data = _gather(db, product_groups, lead_advertiser)
-    pngs = _chart_pngs(data)
-    narrative = _narrative(db, data)
+    data = gather(db, product_groups, lead_advertiser)
+    pngs = build_charts(data)
+    s = get_sections(db, data)
+    ov = data["overview"]
+    cat = ", ".join(product_groups)
+    navy = RGBColor(0x1F, 0x3A, 0x5F)
 
     doc = Document()
-    title = doc.add_heading("Category Pitch Analysis", level=0)
-    for run in title.runs:
-        run.font.color.rgb = RGBColor(0x1F, 0x3A, 0x5F)
-    doc.add_paragraph("Category: " + ", ".join(product_groups))
-    if lead_advertiser:
-        doc.add_paragraph("Lead advertiser: " + lead_advertiser)
+    t = doc.add_heading("Category Pitch Report", level=0)
+    for r in t.runs:
+        r.font.color.rgb = navy
+    doc.add_heading(cat, level=1)
+    doc.add_paragraph(f"Advertisers: {lead_advertiser or 'All advertisers in category'}")
+    doc.add_paragraph(f"Data range: {ov['date_from'] or 'n/a'} to {ov['date_to'] or 'n/a'}  |  Generated: {data['generated_on']}")
 
-    doc.add_heading("Narrative", level=1)
-    for para in narrative.split("\n"):
-        if para.strip():
-            doc.add_paragraph(para.strip())
-
-    def add_chart(key, heading):
+    def chart(key, w=6.2):
         if key in pngs:
-            doc.add_heading(heading, level=1)
-            doc.add_picture(io.BytesIO(pngs[key]), width=Inches(6.3))
+            doc.add_picture(io.BytesIO(pngs[key]), width=Inches(w))
 
-    add_chart("medium", "Medium Split")
-    add_chart("trend", "Spend Trend")
-    add_chart("top_adv", "Top Advertisers")
-    add_chart("sos", "Share of Spend")
+    def table(headers, rows):
+        if not rows:
+            return
+        tb = doc.add_table(rows=1, cols=len(headers)); tb.style = "Light Grid Accent 1"
+        for i, h in enumerate(headers):
+            tb.rows[0].cells[i].text = str(h)
+        for r in rows:
+            cells = tb.add_row().cells
+            for i, c in enumerate(r):
+                cells[i].text = str(c)
 
-    ta = data["top_advertisers"]
-    if ta:
-        doc.add_heading("Top Advertisers (table)", level=1)
-        table = doc.add_table(rows=1, cols=3)
-        table.style = "Light Grid Accent 1"
-        hdr = table.rows[0].cells
-        hdr[0].text, hdr[1].text, hdr[2].text = "Advertiser", "Spend", "Spots"
-        for a in ta:
-            cells = table.add_row().cells
-            cells[0].text = str(a["advertiser"])
-            cells[1].text = f"{a['spend']:,.0f}"
-            cells[2].text = str(a["spots"])
+    doc.add_heading("1. Executive Summary", level=1); doc.add_paragraph(s["executive_summary"])
+    doc.add_heading("2. Category Overview", level=1); doc.add_paragraph(s["category_overview"]); chart("trend"); chart("medium", 4.2)
+    doc.add_heading("3. Advertiser Ranking", level=1); doc.add_paragraph(s["advertiser_ranking"]); chart("ranking")
+    table(["Advertiser", "Total Spend", "Share"], [[a["advertiser"], _money(a["spend"]), f"{a['share_pct']}%"] for a in data["top_advertisers"]])
 
+    n = 4
+    dd = data.get("deep_dive")
+    if dd:
+        doc.add_heading(f"4. Focus Advertiser: {dd['advertiser']}", level=1); doc.add_paragraph(s["deep_dive"])
+        chart("dd_trend"); chart("dd_medium", 4.2)
+        table(["Channel", "Spend", "Spots"], [[x["channel"], _money(x["spend"]), x["spots"]] for x in dd["channels"]])
+        table(["Programme", "Spend", "Spots"], [[x["programme"], _money(x["spend"]), x["spots"]] for x in dd["programmes"]])
+        n = 5
+
+    doc.add_heading(f"{n}. Channel Analysis", level=1); doc.add_paragraph(s["channel_analysis"]); chart("channels")
+    doc.add_heading(f"{n+1}. Competitor Benchmark", level=1); doc.add_paragraph(s["competitor"])
+    table(["Advertiser", "Spend", "Top Medium", "Top Channel"],
+          [[b["advertiser"], _money(b["spend"]), b["top_medium"] or "n/a", b["top_channel"] or "n/a"] for b in data["benchmark"]])
+    chart("sov")
+    doc.add_heading(f"{n+2}. Recommended Basket", level=1); doc.add_paragraph(s["recommendation"]); chart("cprp")
+    doc.add_heading(f"{n+3}. Appendix", level=1)
+    doc.add_paragraph("SOS: advertiser share of total category spend. CPRP: 30s-equivalent rate / TVR. "
+                      "Com is paid airtime; V/A is bonus airtime, excluded from all spend figures.")
     va = data["value_addition"]
-    p = doc.add_paragraph()
-    run = p.add_run(
-        f"Bonus value received (V/A, excluded from spend): "
-        f"{va['va_spots']} spots / {va['va_seconds']:.0f} seconds."
-    )
+    p = doc.add_paragraph(); run = p.add_run(f"Category-wide value addition: {va['va_spots']:,} spots, {va['va_seconds']:,.0f} seconds of bonus airtime.")
     run.font.size = Pt(9)
 
-    buf = io.BytesIO()
-    doc.save(buf)
-    buf.seek(0)
+    buf = io.BytesIO(); doc.save(buf); buf.seek(0)
     return buf.read()
+
+
+_REPORT_CSS = """
+:root{--navy:#1f3a5f;--gold:#c9a227;--ink:#1f2933;--muted:#6b7684;--line:#e4e8ec;--bg:#eef1f5;}
+*{box-sizing:border-box;} body{margin:0;background:var(--bg);font-family:'Inter',system-ui,sans-serif;color:var(--ink);}
+.rp{max-width:900px;margin:0 auto;background:#fff;box-shadow:0 4px 30px rgba(16,32,55,.08);}
+.rp-cover{background:linear-gradient(135deg,#1f3a5f,#16293f);color:#fff;padding:48px 56px 36px;}
+.rp-eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#c9a227;font-weight:700;}
+.rp-cover h1{font-family:'Fraunces',Georgia,serif;font-size:40px;margin:10px 0 14px;font-weight:700;line-height:1.05;}
+.rp-meta{display:flex;flex-wrap:wrap;gap:8px 22px;font-size:13px;color:#c6d3e2;}
+.rp-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-top:26px;}
+.rp-kpi{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:12px 14px;}
+.rp-kpi span{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:#a9bcd2;}
+.rp-kpi strong{display:block;font-size:18px;margin-top:4px;font-weight:700;}
+.rp-sec{padding:30px 56px;border-bottom:1px solid var(--line);}
+.rp-sec h2{font-family:'Fraunces',Georgia,serif;color:var(--navy);font-size:22px;margin:0 0 12px;padding-left:12px;border-left:4px solid var(--gold);}
+.rp-sec h3{font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:16px 0 8px;}
+.rp-narr{font-size:15px;line-height:1.65;color:#2b3743;margin:0 0 14px;}
+.rp-muted{color:var(--muted);font-size:13px;}
+.rp-chart{width:100%;border:1px solid var(--line);border-radius:10px;margin:8px 0;background:#fff;}
+.rp-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start;}
+.rp-nodata{padding:18px;background:#f6f8fa;border:1px dashed var(--line);border-radius:10px;color:var(--muted);font-size:13px;text-align:center;}
+.rp-table{width:100%;border-collapse:collapse;font-size:13px;margin:10px 0;}
+.rp-table th{background:var(--navy);color:#fff;text-align:left;padding:9px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.03em;}
+.rp-table td{padding:8px 12px;border-bottom:1px solid var(--line);}
+.rp-table tbody tr:nth-child(even){background:#f6f8fa;}
+.rp-table .num{text-align:right;font-variant-numeric:tabular-nums;}
+.rp-foot{padding:20px 56px 40px;color:var(--muted);font-size:12px;}
+@media(max-width:640px){.rp-cover,.rp-sec,.rp-foot{padding-left:22px;padding-right:22px;}.rp-grid{grid-template-columns:1fr;}}
+"""

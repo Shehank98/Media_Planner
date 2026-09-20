@@ -31,7 +31,8 @@ _DEFAULT_LOGIC = (
 _DEFAULT_FORMAT = (
     "Write in a confident, concise, pitch-ready tone. Lead with the headline "
     "insight, then support it. Use short paragraphs. Refer to figures exactly "
-    "as given; do not recompute or round differently."
+    "as given; do not recompute or round differently. "
+    "Do not use em dashes or en dashes; use commas or a spaced hyphen."
 )
 
 _MARKER = re.compile(r"^#+\s*format", re.IGNORECASE | re.MULTILINE)

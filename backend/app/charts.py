@@ -30,20 +30,40 @@ ACCENT = "#c9a227"
 
 plt.rcParams.update(
     {
-        "figure.dpi": 130,
+        "figure.dpi": 140,
         "font.size": 11,
         "font.family": "sans-serif",
+        "text.color": "#2b3743",
         "axes.edgecolor": "#d7dbe0",
+        "axes.linewidth": 0.9,
         "axes.grid": True,
-        "grid.color": "#eceef1",
-        "grid.linewidth": 0.8,
+        "axes.grid.axis": "both",
+        "grid.color": "#eef1f4",
+        "grid.linewidth": 1.0,
         "axes.axisbelow": True,
         "axes.titleweight": "bold",
-        "axes.titlecolor": "#1f2933",
-        "axes.titlesize": 13,
+        "axes.titlecolor": "#1f3a5f",
+        "axes.titlesize": 14,
+        "axes.titlelocation": "left",
+        "axes.titlepad": 12,
         "axes.labelcolor": "#52606d",
+        "axes.labelsize": 10,
+        "xtick.color": "#6b7684",
+        "ytick.color": "#6b7684",
+        "xtick.labelsize": 9.5,
+        "ytick.labelsize": 9.5,
+        "legend.fontsize": 9.5,
+        "figure.facecolor": "white",
+        "savefig.facecolor": "white",
     }
 )
+
+
+def _despine(ax, keep_left=True, keep_bottom=True):
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_visible(keep_left)
+    ax.spines["bottom"].set_visible(keep_bottom)
 
 
 def _thousands(x, _pos):
@@ -76,21 +96,25 @@ def bar_chart(labels, values, title="", xlabel="", ylabel="", money=False, horiz
     fig, ax = plt.subplots(figsize=(8, max(3, 0.5 * len(labels) + 1.5)) if horizontal else (8, 4.5))
     colors = [LEAD] * len(labels) if single_color else [PALETTE[i % len(PALETTE)] for i in range(len(labels))]
     if horizontal:
-        bars = ax.barh(labels, values, color=colors)
+        bars = ax.barh(labels, values, color=colors, height=0.72)
         ax.invert_yaxis()
+        ax.grid(False); ax.grid(axis="x")
         if money:
             ax.xaxis.set_major_formatter(FuncFormatter(_thousands))
         if value_labels:
-            ax.bar_label(bars, labels=[_fmt_val(v, money) for v in values], padding=3, fontsize=9, color="#52606d")
-            ax.margins(x=0.15)
+            ax.bar_label(bars, labels=[_fmt_val(v, money) for v in values], padding=4, fontsize=9, color="#52606d")
+            ax.margins(x=0.18)
+        _despine(ax, keep_left=True, keep_bottom=False)
     else:
-        bars = ax.bar(labels, values, color=colors)
+        bars = ax.bar(labels, values, color=colors, width=0.66)
+        ax.grid(False); ax.grid(axis="y")
         if money:
             ax.yaxis.set_major_formatter(FuncFormatter(_thousands))
         if value_labels:
-            ax.bar_label(bars, labels=[_fmt_val(v, money) for v in values], padding=3, fontsize=9, color="#52606d")
-            ax.margins(y=0.15)
+            ax.bar_label(bars, labels=[_fmt_val(v, money) for v in values], padding=4, fontsize=9, color="#52606d")
+            ax.margins(y=0.18)
         plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
+        _despine(ax, keep_left=False, keep_bottom=True)
     ax.set_title(title)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
@@ -109,12 +133,14 @@ def stacked_bar(labels, series: dict[str, list], title="", ylabel="", money=Fals
         vals = np.array([v or 0 for v in vals], dtype=float)
         ax.bar(labels, vals, bottom=bottom, label=name, color=PALETTE[i % len(PALETTE)])
         bottom += vals
+    ax.grid(False); ax.grid(axis="y")
     if money:
         ax.yaxis.set_major_formatter(FuncFormatter(_thousands))
     ax.set_title(title)
     ax.set_ylabel(ylabel)
     ax.legend(frameon=False, ncol=min(len(series), 4), fontsize=9)
     plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
+    _despine(ax)
     return _finish(fig)
 
 
@@ -158,15 +184,18 @@ def line_chart(x, series: dict[str, list], title="", xlabel="", ylabel="", money
         return _empty(title)
     fig, ax = plt.subplots(figsize=(9, 4.5))
     for i, (name, ys) in enumerate(series.items()):
-        ax.plot(x, ys, marker="o", linewidth=2, color=PALETTE[i % len(PALETTE)], label=name)
+        c = PALETTE[i % len(PALETTE)]
+        ax.plot(x, ys, marker="o", markersize=4, linewidth=2.4, color=c, label=name)
+    ax.grid(False); ax.grid(axis="y")
     if money:
         ax.yaxis.set_major_formatter(FuncFormatter(_thousands))
     ax.set_title(title)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     if len(series) > 1:
-        ax.legend(frameon=False)
+        ax.legend(frameon=False, ncol=min(len(series), 3))
     plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
+    _despine(ax)
     return _finish(fig)
 
 

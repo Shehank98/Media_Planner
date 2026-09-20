@@ -16,8 +16,8 @@ const el = (tag, attrs = {}, ...kids) => {
   for (const kid of kids) n.append(kid?.nodeType ? kid : document.createTextNode(kid ?? ""));
   return n;
 };
-const money = (v) => (v == null ? "—" : Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 }));
-const num = (v, d = 2) => (v == null ? "—" : Number(v).toLocaleString(undefined, { maximumFractionDigits: d }));
+const money = (v) => (v == null ? "-" : Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 }));
+const num = (v, d = 2) => (v == null ? "-" : Number(v).toLocaleString(undefined, { maximumFractionDigits: d }));
 const qs = (params) => {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -112,7 +112,7 @@ function kpiTile(label, value, sub, accent) {
 function renderOverviewKpis(boxSel, ov) {
   const box = $(boxSel);
   box.innerHTML = "";
-  const range = ov.date_from ? `${ov.date_from} → ${ov.date_to}` : "no dates";
+  const range = ov.date_from ? `${ov.date_from} to ${ov.date_to}` : "no dates";
   box.append(kpiTile("Total market spend", money(ov.total_spend), range, true));
   box.append(kpiTile("Advertisers", num(ov.advertisers, 0), `${num(ov.spots,0)} paid spots`));
   box.append(kpiTile("Channels", num(ov.channels, 0), `${num(ov.categories,0)} categories`));
@@ -240,7 +240,7 @@ async function runTab1() {
       tableFragment("Medium split", ["Medium", "Spend", "Spots"], ms.map((m) => [m.medium, money(m.spend), m.spots]))
     ));
     box.append(dualCard(
-      chartFragment("Top 5 SOS — TV", "/api/tab1/charts/sos.png?" + qs({ product_groups: pgs, medium: "TV" })),
+      chartFragment("Top 5 SOS - TV", "/api/tab1/charts/sos.png?" + qs({ product_groups: pgs, medium: "TV" })),
       tableFragment("Share of Spend (TV)", ["Advertiser", "Spend", "Share %"], sos.map((s) => [s.advertiser, money(s.spend), num(s.share_pct) + "%"]))
     ));
     box.append(chartCard("Share of Voice over time", "/api/market/charts/sov.png?" + pgQuery));
@@ -255,7 +255,7 @@ async function runTab1() {
     if (g.gainers.length || g.losers.length || g.new_entrants.length) box.append(movementCard(g));
 
     const vaCard = el("div", { class: "card" });
-    vaCard.append(el("div", { class: "section-title" }, "Bonus value received (V/A — excluded from spend)"));
+    vaCard.append(el("div", { class: "section-title" }, "Bonus value received (V/A - excluded from spend)"));
     vaCard.append(el("p", { class: "muted" }, `${va.va_spots} value-addition spots · ${num(va.va_seconds, 0)} seconds of bonus airtime.`));
     box.append(vaCard);
 
@@ -273,7 +273,7 @@ async function runTab1() {
 
 function competitorCard(comp) {
   const card = el("div", { class: "card" });
-  card.append(el("div", { class: "section-title" }, `Competitor view — ${comp.lead.advertiser}`));
+  card.append(el("div", { class: "section-title" }, `Competitor view - ${comp.lead.advertiser}`));
   const rows = [[comp.lead.advertiser + " (lead)", money(comp.lead.spend)]].concat(
     comp.competitors.map((c) => [c.advertiser, money(c.spend)])
   );
@@ -301,7 +301,12 @@ async function exportReport(fmt) {
   const pgs = selected("#t1-groups");
   if (!pgs.length) return toast("Pick a product group first", true);
   const advs = selected("#t1-advertisers");
-  toast("Generating report…");
+  if (fmt === "preview") {
+    const url = "/api/tab1/report/preview?" + qs({ product_groups: pgs, lead_advertiser: advs[0] || "" });
+    window.open(url, "_blank");
+    return;
+  }
+  toast("Generating report, this can take a moment…");
   try {
     const res = await fetch("/api/tab1/report", {
       method: "POST",
@@ -336,7 +341,7 @@ async function runTab2() {
     box.append(chartCard("CPRP by Programme", "/api/tab2/cprp-chart.png?" + qs({ channel, slot, limit: 15 })));
 
     const card = el("div", { class: "card" });
-    card.append(el("div", { class: "section-title" }, "Programmes — TVR & CPRP"));
+    card.append(el("div", { class: "section-title" }, "Programmes - TVR & CPRP"));
     const head = ["+", "Channel", "Programme", "Slot", "Avg TVR", "Reach %", "30s Rate", "Raw Rate", "CPRP", "Rate source"];
     const table = el("table");
     table.append(el("tr", {}, ...head.map((h) => el("th", { class: ["Avg TVR", "Reach %", "30s Rate", "Raw Rate", "CPRP"].includes(h) ? "num" : "" }, h))));
@@ -345,14 +350,14 @@ async function runTab2() {
       const dur = r.rate_duration_secs ? ` (${r.rate_duration_secs}s)` : "";
       table.append(el("tr", {},
         el("td", {}, cb),
-        el("td", {}, r.channel || "—"),
-        el("td", {}, r.programme || "—"),
+        el("td", {}, r.channel || "-"),
+        el("td", {}, r.programme || "-"),
         el("td", {}, slotPill(r.slot)),
         el("td", { class: "num" }, num(r.avg_tvr, 2)),
         el("td", { class: "num" }, num(r.avg_reach_pct, 1)),
         el("td", { class: "num" }, money(r.rate_30s_equivalent)),
-        el("td", { class: "num" }, r.raw_rate == null ? "—" : money(r.raw_rate) + dur),
-        el("td", { class: "num" }, r.cprp == null ? "—" : num(r.cprp)),
+        el("td", { class: "num" }, r.raw_rate == null ? "-" : money(r.raw_rate) + dur),
+        el("td", { class: "num" }, r.cprp == null ? "-" : num(r.cprp)),
         el("td", {}, el("span", { class: "muted" }, r.rate_source || "no rate"))
       ));
     });
@@ -382,7 +387,7 @@ async function renderBasket() {
     });
     box.innerHTML = "";
     box.append(tableFragment("", ["Channel", "Programme", "Slot", "TVR", "Reach", "30s Rate", "CPRP"],
-      r.lines.map((l) => [l.channel, l.programme, l.slot || "—", num(l.tvr, 2), money(l.reach), money(l.rate_30s_equivalent), num(l.cprp)])
+      r.lines.map((l) => [l.channel, l.programme, l.slot || "-", num(l.tvr, 2), money(l.reach), money(l.rate_30s_equivalent), num(l.cprp)])
     ));
     const t = r.totals;
     box.append(el("p", { class: "section-title" },
@@ -419,7 +424,7 @@ async function runTab3() {
     box.append(dualCard(
       chartFragment("Top Advertisers", "/api/tab3/charts/advertisers.png?" + qs({ channel })),
       tableFragment("Advertisers on channel", ["Advertiser", "Category", "Spend", "Spots"],
-        data.advertisers.map((a) => [a.advertiser, a.product_group || "—", money(a.spend), a.spots]))
+        data.advertisers.map((a) => [a.advertiser, a.product_group || "-", money(a.spend), a.spots]))
     ));
     box.append(dualCard(
       chartFragment("Top Programmes", "/api/tab3/charts/programmes.png?" + qs({ channel })),
@@ -433,7 +438,7 @@ async function runTab3() {
 // Fragments
 // ---------------------------------------------------------------------------
 function slotPill(slot) {
-  if (!slot) return el("span", { class: "muted" }, "—");
+  if (!slot) return el("span", { class: "muted" }, "-");
   return el("span", { class: "pill " + (slot === "PT" ? "pt" : "npt") }, slot === "PT" ? "Prime" : "Non-Prime");
 }
 function chartFragment(title, src) {
@@ -486,7 +491,7 @@ async function uploadAndPoll(kind, fileInput, statusEl, onReview) {
     const { job_id } = await api(`/api/uploads/${kind}`, { method: "POST", body: fd });
     s.innerHTML = '<span class="spinner"></span> Parsing in background…';
     const review = await pollJob(job_id);
-    s.className = "status ok"; s.textContent = "Parsed — review below before saving.";
+    s.className = "status ok"; s.textContent = "Parsed - review below before saving.";
     onReview(job_id, review);
   } catch (e) { s.className = "status err"; s.textContent = e.message; }
 }
@@ -525,19 +530,19 @@ function renderRateCardReview(jobId, review) {
   box.innerHTML = "";
   review.payload.forEach((block, bi) => {
     const card = el("div", { class: "card" });
-    card.append(el("div", { class: "section-title" }, `${block.channel} — ${block.row_count} rows`));
+    card.append(el("div", { class: "section-title" }, `${block.channel} - ${block.row_count} rows`));
 
     // Editable effective date + duration
     const controls = el("div", { class: "ask-row" });
     const dateInput = el("input", { type: "date", value: block.effective_date || "", oninput: (e) => (rcStaged[bi].effective_date = e.target.value) });
     const dateFlag = block.effective_date_method === "failed"
-      ? el("span", { class: "pill warn" }, "date not parsed — enter manually")
+      ? el("span", { class: "pill warn" }, "date not parsed - enter manually")
       : el("span", { class: "pill given" }, "date: " + block.effective_date_method);
     controls.append(el("label", {}, "Effective date"), dateInput, dateFlag);
 
     if (block.duration_needs_input) {
       const durInput = el("input", { type: "number", placeholder: "spot secs (e.g. 30)", oninput: (e) => applyDuration(bi, Number(e.target.value)) });
-      controls.append(el("span", { class: "pill warn" }, "duration not stated — specify"), durInput);
+      controls.append(el("span", { class: "pill warn" }, "duration not stated - specify"), durInput);
     } else {
       controls.append(el("span", { class: "pill given" }, `duration: ${block.rate_duration_secs}s`));
     }
@@ -548,13 +553,13 @@ function renderRateCardReview(jobId, review) {
     table.append(el("tr", {}, ...["Programme", "PT/NPT", "Src", "Days", "Start", "Rack", "30s eq"].map((h) => el("th", {}, h))));
     block.rows.slice(0, 12).forEach((r) => {
       table.append(el("tr", {},
-        el("td", {}, r.programme || "—"),
+        el("td", {}, r.programme || "-"),
         el("td", {}, r.prime_non_prime || "(infer)"),
         el("td", {}, el("span", { class: "pill " + (r.prime_non_prime_source === "given" ? "given" : "inferred") }, r.prime_non_prime_source)),
-        el("td", {}, r.days_label || "—"),
-        el("td", {}, r.start_time || "—"),
+        el("td", {}, r.days_label || "-"),
+        el("td", {}, r.start_time || "-"),
         el("td", { class: "num" }, money(r.rack_rate)),
-        el("td", { class: "num" }, r.rate_30s_equivalent == null ? "—" : money(r.rate_30s_equivalent))
+        el("td", { class: "num" }, r.rate_30s_equivalent == null ? "-" : money(r.rate_30s_equivalent))
       ));
     });
     if (block.rows.length > 12) card.append(el("p", { class: "muted" }, `…and ${block.rows.length - 12} more rows`));
@@ -626,7 +631,7 @@ function renderGenericReview(kind, jobId, review, boxSel, reload) {
   card.append(facts);
   if (s.header_mismatch) {
     card.append(el("p", { class: "pill warn" }, "Header mismatch: " + (s.missing_required || []).join(", ")));
-    card.append(el("p", { class: "muted" }, "Missing required columns — confirm the sheet is correct before saving."));
+    card.append(el("p", { class: "muted" }, "Missing required columns - confirm the sheet is correct before saving."));
   }
   card.append(el("button", { class: "btn primary", onclick: async () => {
     try { const r = await confirmJob(jobId, {}); toast(`Saved ${r.rows} rows`); box.innerHTML = ""; reload(); }

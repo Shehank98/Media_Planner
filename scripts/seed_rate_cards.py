@@ -97,7 +97,7 @@ def main() -> int:
     missing = [b["channel"] for b in blocks
                if b["rate_duration_secs"] is None and not any(r.get("rate_duration_secs") for r in b["rows"])]
     if missing:
-        print(f"\nWARNING: no duration for: {', '.join(missing)} — 30s-equivalent will be NULL "
+        print(f"\nWARNING: no duration for: {', '.join(missing)} - 30s-equivalent will be NULL "
               f"for those (pass --duration \"Channel=SECS\").")
 
     if args.dry_run:
@@ -110,7 +110,7 @@ def main() -> int:
         result = rc_service.commit_review(db, os.path.basename(args.workbook), blocks)
     finally:
         db.close()
-    print(f"\nCommitted batch {result['batch_id']} — {result['rows']} rate rows across {len(blocks)} channels.")
+    print(f"\nCommitted batch {result['batch_id']} - {result['rows']} rate rows across {len(blocks)} channels.")
     return 0
 
 

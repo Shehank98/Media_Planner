@@ -159,6 +159,54 @@ def share_of_spend(db: Session, product_groups=None, medium=None, limit=5) -> li
     return out
 
 
+def advertiser_channels(db: Session, product_groups, advertiser: str, limit=5) -> list[dict]:
+    stmt = (
+        select(AdexRow.channel, func.sum(AdexRow.cost), func.count())
+        .where(_where(COM, _pg_filter(product_groups), AdexRow.advertiser == advertiser))
+        .group_by(AdexRow.channel).order_by(func.sum(AdexRow.cost).desc()).limit(limit)
+    )
+    return [{"channel": c or "Unknown", "spend": round(s or 0, 2), "spots": n} for c, s, n in db.execute(stmt).all()]
+
+
+def advertiser_programmes(db: Session, product_groups, advertiser: str, limit=5) -> list[dict]:
+    stmt = (
+        select(AdexRow.program, func.sum(AdexRow.cost), func.count())
+        .where(_where(COM, _pg_filter(product_groups), AdexRow.advertiser == advertiser))
+        .group_by(AdexRow.program).order_by(func.sum(AdexRow.cost).desc()).limit(limit)
+    )
+    return [{"programme": p or "Unknown", "spend": round(s or 0, 2), "spots": n} for p, s, n in db.execute(stmt).all()]
+
+
+def category_channels(db: Session, product_groups=None, limit=10) -> list[dict]:
+    stmt = (
+        select(AdexRow.channel, func.sum(AdexRow.cost), func.count(distinct(AdexRow.advertiser)))
+        .where(_where(COM, _pg_filter(product_groups)))
+        .group_by(AdexRow.channel).order_by(func.sum(AdexRow.cost).desc()).limit(limit)
+    )
+    return [{"channel": c or "Unknown", "spend": round(s or 0, 2), "advertisers": n} for c, s, n in db.execute(stmt).all()]
+
+
+def benchmark(db: Session, product_groups, advertisers: list[str]) -> list[dict]:
+    """Per-advertiser comparison row: total spend, top medium, top channel,
+    top programme, and medium mix."""
+    out = []
+    for adv in advertisers:
+        ms = medium_split(db, product_groups, [adv])
+        chans = advertiser_channels(db, product_groups, adv, 1)
+        progs = advertiser_programmes(db, product_groups, adv, 1)
+        total = round(sum(m["spend"] for m in ms), 2)
+        out.append({
+            "advertiser": adv,
+            "spend": total,
+            "top_medium": ms[0]["medium"] if ms else None,
+            "top_channel": chans[0]["channel"] if chans else None,
+            "top_programme": progs[0]["programme"] if progs else None,
+            "medium_mix": {m["medium"]: m["spend"] for m in ms},
+        })
+    out.sort(key=lambda x: x["spend"], reverse=True)
+    return out
+
+
 def channel_analysis(db: Session, channel: str, product_groups=None, top=10) -> dict:
     """Within a category, who spends most on a channel and on which programmes."""
     base = [COM, AdexRow.channel == channel, _pg_filter(product_groups)]
