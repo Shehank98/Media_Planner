@@ -1,318 +1,175 @@
-# Media Planning & Analysis Assistant
+# Media Analysis System
 
-Takes a campaign brief and the agency's historical adex and TVR data, and
-produces a defensible media plan: a recommended channel/programme lineup with
-the reasoning a planner would put in front of a client, plus a full PDF report.
+A single-user internal tool for a media buying agency. It preps client pitches:
+given a category (e.g. **Banking**), it shows how the category and its
+advertisers spend across **TV / Radio / Press**, which channels and programmes
+perform best, and recommends an optimal channel/programme basket using **CPRP**
+(cost per rating point).
 
-Node/Express backend on Railway, Postgres for storage, a Python worker for
-charts and PDF layout, and the analysis model behind a provider adapter —
-Gemini today, local Ollama later, one env var apart.
+- **Backend:** FastAPI + Postgres (SQLAlchemy)
+- **Charts:** matplotlib, rendered server-side (embeddable into reports)
+- **AI:** Gemini — used for **narrative explanation and ad-hoc questions only**.
+  All numeric analysis is computed in Python/SQL, so numbers are never
+  hallucinated.
+- **Deploy:** Railway (Nixpacks / Procfile provided)
 
-```
-[Google Drive]                    Phase 1: [Gemini API]  --or--  Phase 2: [Ollama]
-   |  adex data (30k+ rows)                 ^  HTTPS                   ^  Cloudflare Tunnel
-   v                                        |                         |
-[Railway: Node/Express] ------- [LLM adapter interface] --------------+
-   |                                   analyzeAndRecommend()
-   v
-[Railway: Postgres]  <--- session-only ---  [TV_ChannelDetails / TV_GrpDetails uploads]
-   |
-   v
-[Python worker: matplotlib + reportlab] --> PDF report
-```
+---
 
-## The data
+## Why numbers are trustworthy
 
-Five sources, each answering a different planning question.
+Every headline figure — spend, share of spend, CPRP, basket totals — is computed
+in `backend/app/services/*.py` using SQL aggregates. Gemini only ever receives a
+**pre-computed result** and writes prose around it (`llm/gemini.py:narrate`). The
+one place the LLM can shape a query is the opt-in **ad-hoc SQL** feature, and
+that runs through a SELECT-only guard (`services/restricted_sql.py`) against a
+restricted DB role.
 
-| Source | Sheet / feed | Answers |
-|---|---|---|
-| MICOS dashboard | `C1` top programmes | which **programmes** |
-| MICOS dashboard | `A1` channel summary | which **channels** |
-| MICOS dashboard | `A2` day of week | which **days** |
-| MICOS dashboard | `A3` day-part bands | which **day-parts** |
-| MICOS dashboard | `TV GRP` spot log | who is **already buying** the slot |
-| Media watch | spot log with cost | what a spot **costs** |
-| Adex | monthly spend by brand | category **spend context** |
+### The one business rule that matters most
 
-A MICOS export is not one table. Sheets are named by code (`A1`, `C1`,
-`TV GRP`), a `Target` sheet above them carries the survey window and the custom
-target group (`Custom TG: Meera 16-45`), and a `Sheet1` PivotTable scratch
-sheet must be *ignored* or it double-counts. Sheets are therefore identified by
-their header signature, not by name — the two `TV_GrpDetails` exports have
-entirely different contents from each other despite the shared naming.
+`V/A | Com` marks each adex row as a paid commercial (`Com`) or a value-addition
+(`V/A`, bonus free airtime). **Spend totals only ever count `Com` rows.** V/A is
+tracked separately as "bonus value received" for the narrative and never blended
+into spend. This filter lives in `services/adex_analysis.py` (`COM = va_com == 'Com'`).
 
-## Two rules that shape the design
+---
 
-**Adex is synced, not uploaded.** `adex_data` is a live table pulled from a
-Google Drive folder on a schedule. Re-syncing a corrected file updates the rows
-it covers instead of duplicating them.
+## The three tabs
 
-**Ratings and cost uploads are session-only.** The workbook is parsed in memory,
-the numbers go to Postgres, and the buffer is dropped. Nothing is written to
-disk, so there is no file to forget to delete. Only the extracted rows live on.
+### Tab 1 — Category / Pitch Analysis (adex data)
+Select product group(s) → advertiser(s). Computes: medium split, monthly/yearly
+spend trend, top advertisers, Top-5 Share of Spend (per medium), competitor view,
+and V/A bonus metric. Exports a pitch report (**PDF or Word**) with embedded
+charts and a Gemini narrative. Inline "ask a question" narrates the current pivot.
 
-## Quick start
+### Tab 2 — Channel Basket & Programme Selection (media-watch / TVR data)
+Ranks programmes by TVR / TVR share % / reach % within prime/non-prime buckets,
+and computes **CPRP = rate_30s_equivalent ÷ TVR** by joining to the rate card
+store (matched by channel + programme, falling back to channel + slot, using the
+rate card version effective on/before the programme's date). The **basket
+builder** sums TVR, reach, cost and blended CPRP for selected programmes. Raw
+rate + duration are always shown alongside so the 30s normalisation is visible.
 
-```bash
-npm install
-pip install -r report/requirements.txt
+### Tab 3 — Channel View
+A **channel-first drill-down on the same Com-only adex dataset** (not a separate
+upload): pick a channel → top advertisers on it → their top programmes.
 
-cp .env.example .env        # set DATABASE_URL and GEMINI_API_KEY at minimum
-npm run migrate
-npm start
-```
+---
 
-`GET /health` reports the database, the active LLM provider, the Python report
-worker and the sync scheduler — check it first when something looks wrong.
+## Shared: Rate Card Store
 
-### When the app comes up broken
+Upload one Excel workbook, one sheet per channel. The parser reads headers
+**per sheet** (column layout varies) and:
 
-`/health` answers `503` and `/api/facets` answers `503` when the database is
-unreachable. **Read the response body, not the status code** — it names the
-cause and what to change:
+1. Sheet name → channel.
+2. **Effective date** — fuzzy-parsed from the free-text title (regex patterns +
+   `dateutil` fuzzy). Always shown for confirm/correct before saving; if it can't
+   be parsed you must enter it manually.
+3. **Rack-rate duration** — detected from the header (`30 Sec`, `10 Sec`). If the
+   header is a plain `Rack Rate` with no duration, it's flagged for you to specify.
+4. **30s-equivalent** — `rate_30s_equivalent = rack_rate × (30 / duration)`,
+   stored alongside the raw rate. Cross-channel CPRP always uses the 30s figure.
+5. **Prime/Non-Prime** — uses the sheet's PT/NPT when given, otherwise inferred
+   from start time against the configurable prime-time window, applied
+   consistently across every channel.
+6. **Day/s** normalised into a weekday set (original text kept).
+7. **Start/End** normalised from mixed time formats.
+8. The sheet's own `Rating` and `CPRP Rack Rate` are stored for reference only —
+   the system always recomputes CPRP from live TVR.
+9. **Review before save** — every upload shows a per-channel table of parsed +
+   inferred fields to correct before committing.
 
-```bash
-curl -s https://your-app.up.railway.app/health | jq .db
-# { "ok": false,
-#   "error": "TLS negotiation with the database failed (self signed certificate).",
-#   "hint":  "Set PGSSL=true. Railway's Postgres uses a self-signed certificate…" }
-```
+Rate cards are versioned: multiple effective-date versions per channel are kept,
+and CPRP joins to the latest version on/before the analysed date. Batches can be
+deleted/replaced manually.
 
-The UI shows the same explanation as a banner across the top. The usual causes
-are `DATABASE_URL` unset, `PGSSL` not set to `true` on Railway, or a
-`localhost` host inside a container — where localhost is the container, not the
-database.
+---
 
-Model failures behave the same way. A rejected key, an exhausted quota, an
-unreachable Ollama and an empty response all answer with their own status and a
-remedy rather than a generic `500`. Generating a plan with nothing loaded
-answers `409` and refuses **before** spending a model call, because a plan
-grounded in no data can only be invented.
+## Uploads are asynchronous
 
-Uploads name what they could not read. A file that matches none of the three
-recognised shapes is reported per-file with the sheets that were inspected, and
-a brief PDF that yields nothing says whether it had a text layer at all — which
-separates "this is a scan, it needs OCR" from "my brief uses different labels".
+Large workbooks don't block the request. `POST /api/uploads/{kind}` returns a
+`job_id` immediately; parsing runs in the background; the client polls
+`GET /api/jobs/{id}` and then fetches `/review`. Nothing is written to the main
+tables until you `POST /api/jobs/{id}/confirm`. Every stored row carries a
+`batch_id` + `uploaded_at` for independent manual delete.
 
-### Environment
+---
 
-| Variable | Purpose |
-|---|---|
-| `DATABASE_URL` | Postgres. Railway provides this when you attach the plugin. |
-| `PGSSL` | `true` on Railway (self-signed cert), `false` locally. |
-| `LLM_PROVIDER` | `gemini` (Phase 1) or `ollama` (Phase 2). The only line that changes. |
-| `GEMINI_API_KEY` | From [Google AI Studio](https://aistudio.google.com/apikey). |
-| `GEMINI_MODEL` | Default `gemini-2.5-flash`. |
-| `GEMINI_MAX_OUTPUT_TOKENS` | Default `8192`. A costed lineup runs long. |
-| `GEMINI_THINKING_BUDGET` | Default `0` (off). On 2.5 models thinking spends the output allowance and can return an empty response. |
-| `OLLAMA_BASE_URL` | Your machine, reached over a Cloudflare Tunnel. |
-| `OLLAMA_MODEL` | Default `qwen2.5:7b-instruct-q4_K_M`. |
-| `GDRIVE_FOLDER_ID` | The Drive folder holding adex workbooks. |
-| `GDRIVE_SERVICE_ACCOUNT_JSON` | Service-account key, raw JSON or base64. |
-| `SYNC_CRON` | Default `0 */4 * * *`. |
-| `PYTHON_BIN` | Default `python3`. |
+## Prompt guide
 
-## The flow
+Upload a `.txt`/`.md` guide (re-uploadable). It's split at a `## Formatting`
+heading into two blocks: **business-logic rules** (injected before any
+query/interpretation) and **formatting/tone rules** (injected before writing
+answers/reports). Managed under **Settings**.
 
-Three tabs: **Plan**, **Data**, **Settings**. Work down the Plan tab, or drive
-the same JSON API directly.
+---
 
-1. **Upload the brief** — `POST /api/briefs/parse` returns the fields it found,
-   which label each one matched, and warnings. **It saves nothing.** Brief PDFs
-   are messy multi-table layouts and the parse is a proposal, not a fact.
-2. **Confirm** — the corrected fields go to `POST /api/briefs`.
-3. **Aggregate** — targeted SQL, not row dumps: competitor spend by quarter, the
-   own-brand trend, the top ~20 programmes by rating, each channel's strongest
-   day and day-part (already ranked), observed spot rates joined on by channel
-   and programme, and who else is buying those programmes.
-4. **Model** — the aggregate plus the brief go to `analyzeAndRecommend()`, which
-   returns a channel-first plan: channels chosen for the audience, programmes
-   beneath each, with a day pattern, time band, commercial length and spot count.
-5. **Schedule** — the spots are placed on real campaign dates in code, not by
-   the model, and the buy is checked for time-belt concentration.
-6. **Store and chart** — the recommendation, the schedule, the chart series and
-   the aggregates it was built from land on `plan_recommendations` and
-   `plan_schedule`.
-7. **Report** — `GET /api/plans/:id/report.pdf` renders the PDF and purges the
-   Drive archive for that run.
-
-Filtering afterwards (`/api/plans/brief/:id/filter`) re-runs the SQL only. The
-model is called once per brief, so filter clicks are free and the rationale a
-client has already seen doesn't shift under them.
-
-### Endpoints
-
-| Method | Path | Notes |
-|---|---|---|
-| `GET` | `/` | The browser UI. |
-| `GET` | `/health` | Dependency status. |
-| `GET` | `/api/facets` | Filter values (sectors, categories, languages, audiences). |
-| `POST` | `/api/sync/now` | "Sync now". `?force=true` re-ingests unchanged files. |
-| `GET` | `/api/sync/status` | Running state, adex coverage, recent runs. |
-| `POST` | `/api/uploads/tv` | MICOS exports, media watch logs and adex workbooks. Session-only. |
-| `DELETE` | `/api/uploads/tv?confirm=true` | Clear ratings before a new survey. |
-| `POST` | `/api/briefs/parse` | Parse a brief PDF. Saves nothing. |
-| `POST` | `/api/briefs` | Save the confirmed brief. |
-| `GET` | `/api/plans/preview/:briefId` | Exactly what the model would receive. No model call. |
-| `POST` | `/api/plans/generate/:briefId` | The one endpoint that costs a model call. |
-| `GET` | `/api/plans/brief/:briefId/filter` | Re-aggregate under filters. No model call. |
-| `GET` | `/api/plans/:id/schedule` | The dated spot grid. |
-| `GET` | `/api/plans/:id/report.pdf` | The PDF report; purges the Drive archive. |
-| `GET` | `/api/settings` | Drive configuration. Secrets report presence only. |
-| `PUT` | `/api/settings/drive` | Set the folder link and service-account key. |
-| `POST` | `/api/settings/drive/test` | Prove the credentials reach the folder. |
-| `GET` | `/api/uploads/datasets` | The upload slots the UI renders. |
-| `POST` | `/api/uploads/archive/purge` | Remove archived sources; adex is kept. |
-
-## Parsing
-
-The workbooks are hand-maintained: title banners above the table, merged group
-headers with sub-labels on the row below, blank spacer rows, totals rows, and
-columns that move between exports. So nothing assumes a fixed layout.
-`src/parsers/sheet.js` finds the header row (trying one-, two- and three-row
-spans), resolves merged cells, and maps each declared field to a column by
-matching against a list of header wordings.
-
-When a new export doesn't parse, the fix is almost always **adding a wording to
-the synonym list**, not changing logic. `POST /api/uploads/tv` reports
-`mappedColumns` per sheet, and the adex parser reports `unmappedFields`, so the
-missing label is visible rather than guessed at.
-
-MICOS sheets are matched the same way, by header signature rather than sheet
-name, and every spec is scored so near-identical layouts (`A2` and `A3` differ
-by one column) resolve to the right one.
-
-The parsers have been run against the real `TV_ChannelDetails_*`,
-`TV_GrpDetails_*` and adex files: 586 programmes, 336 day/day-part rows and
-2,992 competitor spots load cleanly, keyed to the `Meera 16-45` panel over the
-June 2026 survey window.
-
-## What the model is and is not asked to do
-
-The model picks channels and programmes and writes the reasoning. Three things
-are deliberately kept away from it, because they are arithmetic and a wrong
-answer is invisible:
-
-- **Placing spots on dates.** A model asked to emit sixty date columns drops
-  days, double-counts, and puts spots outside the flight. `schedule.js` expands
-  "MON - FRI, 8 spots" across the campaign calendar, spreading them evenly.
-- **Adding up the money.** A plan committing 140% of budget reads exactly like
-  one that fits until someone totals it.
-- **Measuring clutter.** The prompt asks for a spread buy; `clutter.js` measures
-  what the plan actually does per time belt and flags breaches. Agreement in the
-  rationale is not evidence of it in the numbers.
-
-## Three places the numbers could go quietly wrong
-
-All three are handled, and all three are worth knowing about — each one is a
-silent wrong answer rather than an error.
-
-**Natural keys and NULL.** The upsert key is
-`(month, advertiser, brand, product2)`, but in Postgres `NULL != NULL`, so a
-UNIQUE constraint containing a nullable column lets duplicates straight through
-— exactly the "re-syncs shouldn't duplicate" failure the design is trying to
-avoid. Those columns are `NOT NULL DEFAULT ''` and the parsers normalise missing
-values to `''`.
-
-**Budget units.** Briefs quote budgets as "Rs. 25 Lakhs", "LKR 2,500,000" and
-"25 Mn". Reading one of those wrong is a factor-of-10⁵ error in every
-budget-fit judgement the model makes. Unit words are converted; a bare number
-is converted *and flagged in the warnings* for the planner to confirm.
-
-**Month order in adex.** The adex exports write the month as `1/1/2021`,
-`2/1/2021`, `3/1/2021` — month-first. Read day-first (the Sri Lankan
-convention), every one of those collapses onto January, so a year of data
-silently becomes one month and the natural key merges rows that should be
-distinct. The parser cross-checks against the `Month2` name column and lets the
-named month win.
-
-## Grounding and costing checks
-
-The load-bearing rule in the system prompt is "never invent channel names,
-programmes or costs not present in the supplied data" — and it's the one a
-model breaks most quietly. A plausible-sounding programme name in a
-client-facing report is worse than a gap; an invented price is worse still,
-because it goes straight into a client's budget.
-
-So three things are verified in code rather than trusted:
-
-- **Every channel and programme** is matched against the data the model was
-  given — TV ratings, media watch rates (which is where radio lives), spot-level
-  competitor activity and the channel summary. Unmatched entries are flagged.
-- **Every quoted cost** must have an observed spot rate behind it for that
-  channel and programme. A cost with no rate observation is flagged separately.
-- **The plan is totalled** and compared against the brief's budget. A plan that
-  quietly commits 140% of budget looks exactly like one that fits until someone
-  adds it up.
-
-Anything that fails is described in `gaps_or_caveats`, marked in the PDF lineup
-table (`†` ungrounded, `‡` unsupported cost), and caps the plan's confidence at
-`medium`. Flagged entries are **kept, not deleted** — a planner reviewing the
-plan should see what was proposed and why it was doubted.
-
-## PDF report
-
-Seven sections: cover, executive summary, costed lineup table, four charts,
-competitor analysis, confidence and caveats, and an appendix carrying the raw
-aggregates — programme ratings, day and day-part tables, observed spot rates and
-competitor activity — for audit.
-
-Node spawns `report/build_report.py` with a JSON payload. **The worker has no
-database access** — it can only draw what was already stored on the plan, which
-keeps the PDF and the audit trail in agreement.
-
-## Switching to Ollama (Phase 2)
+## Running locally
 
 ```bash
-ollama pull qwen2.5:7b-instruct-q4_K_M
+# 1. Postgres
+createdb media_planner   # or use Docker
+
+# 2. Python deps
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r backend/requirements.txt
+
+# 3. Config
+cp .env.example .env      # set DATABASE_URL, optionally GEMINI_API_KEY
+
+# 4. Run
+uvicorn app.main:app --reload --app-dir backend
+# open http://localhost:8000
 ```
 
-Set `LLM_PROVIDER=ollama` and `OLLAMA_BASE_URL`. Nothing else changes — both
-adapters take the same input, use the same system prompt, and return the same
-shape.
-
-Then measure rather than guess:
+Tables are auto-created on startup. To enable the restricted ad-hoc SQL role:
 
 ```bash
-npm run bench -- --brief 3 --providers gemini,ollama --runs 2
+psql "$DATABASE_URL" -f db/restricted_role.sql   # edit the password first
+# then set READONLY_DATABASE_URL in .env
 ```
 
-It prints wall-clock time and tokens/sec per run. On CPU-only hardware, if the
-7B model is too slow, `llama3.2:3b-instruct` is faster but its rationale is
-noticeably shallower — a fair fallback, not a first choice for client-facing
-work. Avoid 14B+ entirely at this RAM tier. Speed only tells you what's
-tolerable; read the actual rationale before choosing.
+## Deploying on Railway
 
-## Tests
+1. Attach a Postgres plugin (sets `DATABASE_URL`).
+2. Set `PGSSL=true` and `GEMINI_API_KEY`.
+3. Nixpacks uses `nixpacks.toml` to install `backend/requirements.txt` and start
+   uvicorn. (`Procfile` is provided as a fallback.)
 
-```bash
-npm test
+---
+
+## API surface (selected)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/api/uploads/{rate_card\|adex\|media_watch}` | async upload |
+| GET  | `/api/jobs/{id}` · `/review` | poll / review |
+| POST | `/api/jobs/{id}/confirm` | commit reviewed data |
+| GET  | `/api/tab1/*` | category analysis + charts |
+| POST | `/api/tab1/report` | PDF / Word pitch report |
+| GET  | `/api/tab2/best-programmes` · `POST /api/tab2/basket` | CPRP + basket |
+| GET  | `/api/tab3/overview` | channel-first view |
+| POST | `/api/chat/ask` | ad-hoc (narrative or restricted SQL) |
+| GET/PUT | `/api/settings*` | prime window + prompt guide |
+
+Interactive docs at `/docs` (FastAPI/Swagger).
+
+---
+
+## Project layout
+
 ```
-
-85 tests. The database ones skip unless `TEST_DATABASE_URL` is set:
-
-```bash
-TEST_DATABASE_URL=postgres://... npm test
-```
-
-Those are worth running — upsert idempotency and the aggregation SQL are only
-meaningfully testable against real Postgres. `test/fixtures.js` generates
-workbooks matching the real MICOS and adex layouts (including the `Target`
-sheet, the PivotTable scratch sheet and the real column wording), and
-`test/make_brief_pdf.py` generates a deliberately awkward brief PDF.
-
-## Layout
-
-```
-public/                The browser UI (no build step)
-db/schema.sql          Schema, idempotent, applied on boot
-src/llm/               Adapter seam: index.js, gemini.js, ollama.js, systemPrompt.js
-src/parsers/           sheet.js (header detection) + one parser per file type
-                       adexParser, micosParser, mediaWatchParser, briefParser
-src/sync/              Drive client, adex sync, cron scheduler
-src/services/          aggregate.js (adex) + tvAggregate.js (ratings, days, cost),
-                       repositories, plan pipeline, chart data
-src/routes/            HTTP layer
-report/                build_report.py, charts.py — the PDF worker
+backend/app/
+  main.py            FastAPI app + static frontend mount
+  config.py          env config
+  database.py        engines (rw + read-only), session, init
+  models.py          SQLAlchemy tables (all carry batch_id + uploaded_at)
+  jobs.py            async upload orchestration (stage → review → confirm)
+  charts.py          server-side matplotlib charts (shared by app + reports)
+  parsers/           rate_card / adex / media_watch (per-sheet header reading)
+  services/          rate_cards, adex_analysis (Tab1/3), basket (Tab2),
+                     ingest, report (PDF/Word), restricted_sql, settings_store
+  llm/               gemini client + prompt_guide store
+  routers/           HTTP endpoints per tab
+frontend/            single-page UI (index.html / styles.css / app.js)
+db/restricted_role.sql
 ```

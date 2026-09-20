@@ -1,17 +1,27 @@
-node_modules/
-.env
-.env.local
-*.log
-
-# Report output + chart scratch. Generated per request, never source of truth.
-tmp/
-out/
-
-# Python venv for the report worker
-.venv/
+# Python
 __pycache__/
 *.pyc
+.venv/
+venv/
+/opt/venv/
 
-# Sample spreadsheets / briefs are client data - keep them local, never commit.
+# Environment
+.env
+.env.local
+
+# Staged uploads / generated output (never source of truth)
+var/
+/tmp/media-planner-data/
+*.log
+
+# Matplotlib cache
+.matplotlib/
+
+# Client data - keep local, never commit
 samples/*
 !samples/README.md
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

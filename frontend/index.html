@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Media Analysis System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">M</div>
+        <div>
+          <div class="brand-title">Media Analysis</div>
+          <div class="brand-sub">Pitch &amp; Planning</div>
+        </div>
+      </div>
+      <nav class="nav">
+        <button class="nav-item active" data-tab="tab1">📊 Category / Pitch</button>
+        <button class="nav-item" data-tab="tab2">🧺 Channel Basket &amp; CPRP</button>
+        <button class="nav-item" data-tab="tab3">📺 Channel View</button>
+        <hr />
+        <button class="nav-item" data-tab="ratecards">💳 Rate Cards</button>
+        <button class="nav-item" data-tab="data">📁 Data &amp; Uploads</button>
+        <button class="nav-item" data-tab="settings">⚙️ Settings</button>
+      </nav>
+      <div class="sidebar-foot">
+        <span id="health-dot" class="dot"></span>
+        <span id="health-text">checking…</span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <!-- TAB 1 -->
+      <section class="tab" id="tab1">
+        <header class="page-head">
+          <h1>Category / Pitch Analysis</h1>
+          <p>Adex spend across TV / Radio / Press. All spend is <strong>Com-only</strong> — V/A bonus airtime is tracked separately, never in spend.</p>
+        </header>
+
+        <div class="card filters">
+          <div class="field">
+            <label>Product Group(s)</label>
+            <select id="t1-groups" multiple size="4"></select>
+          </div>
+          <div class="field">
+            <label>Advertiser(s) <span class="muted">(optional)</span></label>
+            <select id="t1-advertisers" multiple size="4"></select>
+          </div>
+          <div class="field field-actions">
+            <button class="btn primary" id="t1-run">Run Analysis</button>
+            <button class="btn" id="t1-report">Export Report ▾</button>
+            <div class="menu" id="t1-report-menu" hidden>
+              <button data-fmt="pdf">PDF</button>
+              <button data-fmt="docx">Word</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="t1-results" class="results"></div>
+
+        <div class="card">
+          <h3>Ask a question</h3>
+          <p class="muted">Gemini narrates the pre-computed figures in the agency tone — it never invents numbers.</p>
+          <div class="ask-row">
+            <input id="t1-q" type="text" placeholder="e.g. How did the category split across TV and radio?" />
+            <button class="btn primary" id="t1-ask">Ask</button>
+          </div>
+          <div id="t1-answer" class="answer"></div>
+        </div>
+      </section>
+
+      <!-- TAB 2 -->
+      <section class="tab" id="tab2" hidden>
+        <header class="page-head">
+          <h1>Channel Basket &amp; Programme Selection</h1>
+          <p>CPRP = 30-second-equivalent rate ÷ TVR. Lower CPRP = more cost-efficient. Raw rate &amp; duration shown alongside so the normalisation is never hidden.</p>
+        </header>
+
+        <div class="card filters">
+          <div class="field">
+            <label>Channel</label>
+            <select id="t2-channel"><option value="">All channels</option></select>
+          </div>
+          <div class="field">
+            <label>Slot</label>
+            <select id="t2-slot"><option value="">All</option><option value="PT">Prime</option><option value="NPT">Non-Prime</option></select>
+          </div>
+          <div class="field">
+            <label>Rank by</label>
+            <select id="t2-metric">
+              <option value="tvr">TVR</option>
+              <option value="tvr_share_pct">TVR Share %</option>
+              <option value="reach_pct">Reach %</option>
+            </select>
+          </div>
+          <div class="field field-actions">
+            <button class="btn primary" id="t2-run">Show Programmes</button>
+          </div>
+        </div>
+
+        <div id="t2-results" class="results"></div>
+
+        <div class="card" id="t2-basket-card" hidden>
+          <h3>Basket builder</h3>
+          <p class="muted">Selected programmes — combined TVR, reach, cost and blended CPRP.</p>
+          <div id="t2-basket"></div>
+          <button class="btn" id="t2-export" hidden>Export CSV</button>
+        </div>
+      </section>
+
+      <!-- TAB 3 -->
+      <section class="tab" id="tab3" hidden>
+        <header class="page-head">
+          <h1>Channel View</h1>
+          <p>Channel-first drill-down on the same Com-only adex data: who dominates a channel and on which programmes.</p>
+        </header>
+        <div class="card filters">
+          <div class="field">
+            <label>Channel</label>
+            <select id="t3-channel"></select>
+          </div>
+          <div class="field field-actions">
+            <button class="btn primary" id="t3-run">View Channel</button>
+          </div>
+        </div>
+        <div id="t3-results" class="results"></div>
+      </section>
+
+      <!-- RATE CARDS -->
+      <section class="tab" id="ratecards" hidden>
+        <header class="page-head">
+          <h1>Rate Card Store</h1>
+          <p>One workbook, one sheet per channel. Review every parsed &amp; inferred field before saving.</p>
+        </header>
+        <div class="card">
+          <h3>Upload rate card workbook</h3>
+          <input type="file" id="rc-file" accept=".xlsx,.xls" />
+          <button class="btn primary" id="rc-upload">Upload &amp; Parse</button>
+          <div id="rc-status" class="status"></div>
+        </div>
+        <div id="rc-review"></div>
+        <div class="card">
+          <h3>Stored rate card batches</h3>
+          <div id="rc-batches"></div>
+        </div>
+      </section>
+
+      <!-- DATA & UPLOADS -->
+      <section class="tab" id="data" hidden>
+        <header class="page-head">
+          <h1>Data &amp; Uploads</h1>
+          <p>Large files parse in the background. Nothing is stored until you confirm the review.</p>
+        </header>
+        <div class="grid-2">
+          <div class="card">
+            <h3>Adex data (Tab 1 / Tab 3)</h3>
+            <input type="file" id="adex-file" accept=".xlsx,.xls" />
+            <button class="btn primary" id="adex-upload">Upload &amp; Parse</button>
+            <div id="adex-status" class="status"></div>
+            <div id="adex-review"></div>
+            <h4>Batches</h4>
+            <div id="adex-batches"></div>
+          </div>
+          <div class="card">
+            <h3>Media-watch / TVR data (Tab 2)</h3>
+            <input type="file" id="mw-file" accept=".xlsx,.xls" />
+            <button class="btn primary" id="mw-upload">Upload &amp; Parse</button>
+            <div id="mw-status" class="status"></div>
+            <div id="mw-review"></div>
+            <h4>Batches</h4>
+            <div id="mw-batches"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SETTINGS -->
+      <section class="tab" id="settings" hidden>
+        <header class="page-head">
+          <h1>Settings</h1>
+        </header>
+        <div class="card">
+          <h3>Prime-time window</h3>
+          <p class="muted">Applied consistently across every channel to infer PT/NPT where the sheet doesn't state it.</p>
+          <div class="ask-row">
+            <input type="time" id="prime-start" /> <span>to</span> <input type="time" id="prime-end" />
+            <button class="btn primary" id="prime-save">Save</button>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Prompt guide</h3>
+          <p class="muted">Split at a "## Formatting" heading: business-logic rules injected before analysis, formatting/tone rules before writing answers.</p>
+          <input type="file" id="guide-file" accept=".txt,.md" />
+          <button class="btn" id="guide-upload">Upload file</button>
+          <textarea id="guide-text" rows="10" placeholder="Business logic rules…&#10;&#10;## Formatting&#10;Tone rules…"></textarea>
+          <button class="btn primary" id="guide-save">Save guide</button>
+          <div id="guide-status" class="status"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <div id="toast" class="toast" hidden></div>
+  <script src="/app.js"></script>
+</body>
+</html>
