@@ -128,6 +128,22 @@ psql "$DATABASE_URL" -f db/restricted_role.sql   # edit the password first
 # then set READONLY_DATABASE_URL in .env
 ```
 
+## Seeding rate cards from the command line
+
+Besides the web upload, a rate card workbook can be loaded straight into
+Postgres with the same parser/commit logic:
+
+```bash
+export DATABASE_URL=postgresql://.../media_planner
+python scripts/seed_rate_cards.py RateCards.xlsx \
+    --duration "Sirasa TV=30" \    # for a sheet with a plain "Rack Rate" header
+    --effective "TV Derana="       # blank -> NULL (always-applicable)
+```
+
+The sheet's own `CPRP Rack Rate` column is dropped by default (the system
+recomputes CPRP from live TVR); pass `--keep-cprp` to store it for reference.
+Use `--dry-run` to preview the plan without writing.
+
 ## Deploying on Railway
 
 1. Attach a Postgres plugin (sets `DATABASE_URL`).
