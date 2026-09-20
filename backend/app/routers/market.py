@@ -1,0 +1,93 @@
+"""Market Overview dashboard + advanced market-movement endpoints.
+
+Accepts an optional product_groups filter so the same endpoints power both the
+whole-market dashboard and a category-filtered view in Tab 1.
+"""
+from __future__ import annotations
+
+from fastapi import APIRouter, Body, Depends, Query, Response
+from sqlalchemy.orm import Session
+
+from .. import charts
+from ..database import get_db
+from ..llm import gemini, prompt_guide
+from ..services import market
+
+router = APIRouter(prefix="/api/market", tags=["market-overview"])
+
+
+@router.get("/overview")
+def overview(product_groups: list[str] | None = Query(None), db: Session = Depends(get_db)):
+    return market.overview(db, product_groups)
+
+
+@router.get("/top-categories")
+def top_categories(limit: int = 10, db: Session = Depends(get_db)):
+    return market.top_categories(db, limit)
+
+
+@router.get("/growth")
+def growth(product_groups: list[str] | None = Query(None), db: Session = Depends(get_db)):
+    return market.growth(db, product_groups)
+
+
+@router.get("/sov-trend")
+def sov_trend(product_groups: list[str] | None = Query(None), top_n: int = 5, db: Session = Depends(get_db)):
+    return market.sov_trend(db, product_groups, top_n)
+
+
+# --- charts ---------------------------------------------------------------
+@router.get("/charts/top-categories.png")
+def chart_top_categories(limit: int = 10, db: Session = Depends(get_db)):
+    data = market.top_categories(db, limit)
+    png = charts.bar_chart([d["category"] for d in data], [d["spend"] for d in data],
+                           title="Top Categories by Spend", money=True, single_color=True)
+    return Response(png, media_type="image/png")
+
+
+@router.get("/charts/trend.png")
+def chart_trend(product_groups: list[str] | None = Query(None), db: Session = Depends(get_db)):
+    data = market.market_trend(db, product_groups)
+    png = charts.stacked_bar(data["labels"], data["series"], title="Monthly Spend by Medium", money=True)
+    return Response(png, media_type="image/png")
+
+
+@router.get("/charts/sov.png")
+def chart_sov(product_groups: list[str] | None = Query(None), top_n: int = 5, db: Session = Depends(get_db)):
+    data = market.sov_trend(db, product_groups, top_n)
+    png = charts.line_chart(data["labels"], data["series"], title="Share of Voice Over Time (%)", ylabel="% of spend")
+    return Response(png, media_type="image/png")
+
+
+@router.get("/charts/heatmap.png")
+def chart_heatmap(product_groups: list[str] | None = Query(None), top_n: int = 10, db: Session = Depends(get_db)):
+    data = market.heatmap(db, product_groups, top_n)
+    png = charts.heatmap(data["rows"], data["cols"], data["matrix"], title="Advertiser Spend Heatmap (by month)")
+    return Response(png, media_type="image/png")
+
+
+@router.get("/charts/growth.png")
+def chart_growth(product_groups: list[str] | None = Query(None), db: Session = Depends(get_db)):
+    g = market.growth(db, product_groups)
+    movers = (g["gainers"] + g["losers"])
+    movers.sort(key=lambda x: x["delta"])
+    png = charts.bar_chart([m["advertiser"] for m in movers], [m["delta"] for m in movers],
+                           title="Biggest Movers (spend change, 2nd half vs 1st)", money=True)
+    return Response(png, media_type="image/png")
+
+
+# --- AI market read -------------------------------------------------------
+@router.post("/ai-read")
+def ai_read(body: dict = Body(default={}), db: Session = Depends(get_db)):
+    pgs = body.get("product_groups")
+    computed = {
+        "overview": market.overview(db, pgs),
+        "top_categories": market.top_categories(db, 6) if not pgs else None,
+        "share_of_voice_trend": market.sov_trend(db, pgs, 5),
+        "growth": market.growth(db, pgs),
+    }
+    scope = ", ".join(pgs) if pgs else "the whole market"
+    q = (f"Give a sharp market read for {scope}: what is happening, who is winning and losing, "
+         f"where spend is concentrating, and one clear recommendation. Base it only on the figures.")
+    text = gemini.narrate(prompt_guide.get_logic(db), prompt_guide.get_format(db), q, computed)
+    return {"analysis": text, "computed": computed}

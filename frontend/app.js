@@ -75,6 +75,7 @@ const loaded = {};
 function onTabShow(tab) {
   if (loaded[tab]) return;
   loaded[tab] = true;
+  if (tab === "market") initMarket();
   if (tab === "tab1") initTab1();
   if (tab === "tab2") initTab2();
   if (tab === "tab3") initTab3();
@@ -96,6 +97,96 @@ function onTabShow(tab) {
     $("#health-text").textContent = "API offline";
   }
 })();
+
+// ---------------------------------------------------------------------------
+// Shared: KPI tiles + AI analysis block
+// ---------------------------------------------------------------------------
+function kpiTile(label, value, sub, accent) {
+  const t = el("div", { class: "kpi" + (accent ? " accent" : "") });
+  t.append(el("div", { class: "kpi-label" }, label));
+  t.append(el("div", { class: "kpi-value" }, value));
+  if (sub) t.append(el("div", { class: "kpi-sub" }, sub));
+  return t;
+}
+
+function renderOverviewKpis(boxSel, ov) {
+  const box = $(boxSel);
+  box.innerHTML = "";
+  const range = ov.date_from ? `${ov.date_from} → ${ov.date_to}` : "no dates";
+  box.append(kpiTile("Total market spend", money(ov.total_spend), range, true));
+  box.append(kpiTile("Advertisers", num(ov.advertisers, 0), `${num(ov.spots,0)} paid spots`));
+  box.append(kpiTile("Channels", num(ov.channels, 0), `${num(ov.categories,0)} categories`));
+  if (ov.top_category) box.append(kpiTile("Top category", ov.top_category.name, money(ov.top_category.spend)));
+  if (ov.top_advertiser) box.append(kpiTile("Top advertiser", ov.top_advertiser.name, money(ov.top_advertiser.spend)));
+  box.append(kpiTile("Bonus value (V/A)", `${num(ov.va_spots,0)} spots`, `${num(ov.va_seconds,0)}s free airtime`));
+}
+
+// Render an AI analysis card that reads the pre-computed figures.
+async function renderAiRead(boxSel, productGroups) {
+  const box = $(boxSel);
+  box.hidden = false;
+  box.className = "card ai-card";
+  box.innerHTML = '<div class="ai-head"><span class="ai-badge">AI market read</span></div><div class="ai-body"><span class="spinner"></span> Reading the numbers…</div>';
+  try {
+    const r = await api("/api/market/ai-read", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ product_groups: productGroups || null }),
+    });
+    box.querySelector(".ai-body").textContent = r.analysis;
+  } catch (e) {
+    box.querySelector(".ai-body").innerHTML = `<span class="status err">${e.message}</span>`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// MARKET OVERVIEW
+// ---------------------------------------------------------------------------
+async function initMarket() {
+  const box = $("#mkt-results");
+  box.innerHTML = '<div class="card"><span class="spinner"></span> Loading market…</div>';
+  try {
+    const ov = await api("/api/market/overview");
+    renderOverviewKpis("#mkt-kpis", ov);
+    box.innerHTML = "";
+
+    box.append(chartCard("Monthly spend by medium", "/api/market/charts/trend.png"));
+    box.append(dualCard(
+      chartFragment("Top categories by spend", "/api/market/charts/top-categories.png"),
+      chartFragment("Share of Voice over time", "/api/market/charts/sov.png")
+    ));
+    box.append(chartCard("Advertiser spend heatmap (by month)", "/api/market/charts/heatmap.png"));
+    box.append(chartCard("Biggest movers", "/api/market/charts/growth.png"));
+
+    // movement tables
+    const g = await api("/api/market/growth");
+    if (g.gainers.length || g.losers.length || g.new_entrants.length) {
+      box.append(movementCard(g));
+    }
+    renderAiRead("#mkt-ai", null);
+  } catch (e) {
+    box.innerHTML = `<div class="card status err">${e.message}</div>`;
+  }
+}
+
+function movementCard(g) {
+  const card = el("div", { class: "card" });
+  const grid = el("div", { class: "grid-2" });
+  const gain = el("div");
+  gain.append(el("div", { class: "section-title" }, "Gainers (2nd half vs 1st)"));
+  gain.append(tableFragment("", ["Advertiser", "Before", "After", "Δ Spend"],
+    g.gainers.map((c) => [c.advertiser, money(c.before), money(c.after), "+" + money(c.delta)])));
+  const lose = el("div");
+  lose.append(el("div", { class: "section-title" }, "Decliners"));
+  lose.append(tableFragment("", ["Advertiser", "Before", "After", "Δ Spend"],
+    g.losers.map((c) => [c.advertiser, money(c.before), money(c.after), money(c.delta)])));
+  grid.append(gain, lose);
+  card.append(grid);
+  if (g.new_entrants.length) {
+    card.append(el("div", { class: "section-title", style: "margin-top:16px" }, "New entrants (2nd half only)"));
+    card.append(tableFragment("", ["Advertiser", "Spend"], g.new_entrants.map((n) => [n.advertiser, money(n.spend)])));
+  }
+  return card;
+}
 
 // ---------------------------------------------------------------------------
 // TAB 1 - Category / Pitch
@@ -130,29 +221,38 @@ async function runTab1() {
   const box = $("#t1-results");
   box.innerHTML = '<div class="card"><span class="spinner"></span> Computing…</div>';
   const query = qs({ product_groups: pgs, advertisers: advs });
+  const pgQuery = qs({ product_groups: pgs });
 
   try {
-    const [ms, top, sos, va] = await Promise.all([
+    const [ov, ms, top, sos, va] = await Promise.all([
+      api("/api/market/overview?" + pgQuery),
       api("/api/tab1/medium-split?" + query),
-      api("/api/tab1/top-advertisers?" + qs({ product_groups: pgs })),
+      api("/api/tab1/top-advertisers?" + pgQuery),
       api("/api/tab1/sos?" + qs({ product_groups: pgs, medium: "TV" })),
       api("/api/tab1/value-addition?" + query),
     ]);
+    renderOverviewKpis("#t1-kpis", ov);
     box.innerHTML = "";
 
-    box.append(chartCard("Spend Trend", "/api/tab1/charts/trend.png?" + query));
+    box.append(chartCard("Spend trend", "/api/tab1/charts/trend.png?" + query));
     box.append(dualCard(
-      chartFragment("Medium Split", "/api/tab1/charts/medium-split.png?" + query),
-      tableFragment("Medium Split", ["Medium", "Spend", "Spots"], ms.map((m) => [m.medium, money(m.spend), m.spots]))
+      chartFragment("Medium split", "/api/tab1/charts/medium-split.png?" + query),
+      tableFragment("Medium split", ["Medium", "Spend", "Spots"], ms.map((m) => [m.medium, money(m.spend), m.spots]))
     ));
     box.append(dualCard(
       chartFragment("Top 5 SOS — TV", "/api/tab1/charts/sos.png?" + qs({ product_groups: pgs, medium: "TV" })),
       tableFragment("Share of Spend (TV)", ["Advertiser", "Spend", "Share %"], sos.map((s) => [s.advertiser, money(s.spend), num(s.share_pct) + "%"]))
     ));
+    box.append(chartCard("Share of Voice over time", "/api/market/charts/sov.png?" + pgQuery));
     box.append(dualCard(
-      chartFragment("Top Advertisers", "/api/tab1/charts/top-advertisers.png?" + qs({ product_groups: pgs })),
-      tableFragment("Top Advertisers", ["Advertiser", "Spend", "Spots"], top.map((t) => [t.advertiser, money(t.spend), t.spots]))
+      chartFragment("Top advertisers", "/api/tab1/charts/top-advertisers.png?" + pgQuery),
+      tableFragment("Top advertisers", ["Advertiser", "Spend", "Spots"], top.map((t) => [t.advertiser, money(t.spend), t.spots]))
     ));
+    box.append(chartCard("Advertiser spend heatmap (by month)", "/api/market/charts/heatmap.png?" + pgQuery));
+    box.append(chartCard("Biggest movers", "/api/market/charts/growth.png?" + pgQuery));
+
+    const g = await api("/api/market/growth?" + pgQuery);
+    if (g.gainers.length || g.losers.length || g.new_entrants.length) box.append(movementCard(g));
 
     const vaCard = el("div", { class: "card" });
     vaCard.append(el("div", { class: "section-title" }, "Bonus value received (V/A — excluded from spend)"));
@@ -164,6 +264,8 @@ async function runTab1() {
       const comp = await api("/api/tab1/competitor?" + qs({ product_groups: pgs, lead_advertiser: advs[0] }));
       box.append(competitorCard(comp));
     }
+
+    renderAiRead("#t1-ai", pgs);
   } catch (e) {
     box.innerHTML = `<div class="card status err">${e.message}</div>`;
   }
@@ -562,13 +664,18 @@ function batchRow(b, detail, onDelete) {
 // ---------------------------------------------------------------------------
 // SETTINGS
 // ---------------------------------------------------------------------------
-async function initSettings() {
+async function loadSettingsValues() {
   try {
     const s = await api("/api/settings");
     $("#prime-start").value = s.prime_start || "18:00";
     $("#prime-end").value = s.prime_end || "22:00";
-    $("#guide-text").value = (s.prompt_guide_logic || "") + "\n\n## Formatting\n" + (s.prompt_guide_format || "");
+    $("#analysis-text").value = s.analysis_guide || "";
+    $("#template-text").value = s.template_guide || "";
   } catch (e) { toast(e.message, true); }
+}
+
+async function initSettings() {
+  await loadSettingsValues();
 
   $("#prime-save").addEventListener("click", async () => {
     try {
@@ -580,27 +687,29 @@ async function initSettings() {
     } catch (e) { toast(e.message, true); }
   });
 
-  $("#guide-save").addEventListener("click", async () => {
+  const saveGuide = async (kind, textSel, statusSel) => {
     try {
-      const r = await api("/api/settings/prompt-guide", {
+      const r = await api(`/api/settings/${kind}-guide`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: $("#guide-text").value }),
+        body: JSON.stringify({ text: $(textSel).value }),
       });
-      $("#guide-status").className = "status ok";
-      $("#guide-status").textContent = `Saved (logic ${r.logic_chars} chars, format ${r.format_chars} chars).`;
+      $(statusSel).className = "status ok";
+      $(statusSel).textContent = "Saved (" + (r.analysis_chars ?? r.template_chars) + " chars).";
     } catch (e) { toast(e.message, true); }
-  });
-
-  $("#guide-upload").addEventListener("click", async () => {
-    const f = $("#guide-file").files[0];
+  };
+  const uploadGuide = async (kind, fileSel) => {
+    const f = $(fileSel).files[0];
     if (!f) return toast("Choose a file", true);
     const fd = new FormData(); fd.append("file", f);
-    try {
-      await api("/api/settings/prompt-guide/upload", { method: "POST", body: fd });
-      toast("Guide uploaded"); initSettings();
-    } catch (e) { toast(e.message, true); }
-  });
+    try { await api(`/api/settings/${kind}-guide/upload`, { method: "POST", body: fd }); toast("Uploaded"); loadSettingsValues(); }
+    catch (e) { toast(e.message, true); }
+  };
+
+  $("#analysis-save").addEventListener("click", () => saveGuide("analysis", "#analysis-text", "#analysis-status"));
+  $("#template-save").addEventListener("click", () => saveGuide("template", "#template-text", "#template-status"));
+  $("#analysis-upload").addEventListener("click", () => uploadGuide("analysis", "#analysis-file"));
+  $("#template-upload").addEventListener("click", () => uploadGuide("template", "#template-file"));
 }
 
 // Init default tab
-onTabShow("tab1");
+onTabShow("market");

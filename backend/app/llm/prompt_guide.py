@@ -1,15 +1,17 @@
 """Prompt guide store.
 
-The guide is uploaded once (and re-uploadable) as text/markdown, split into
-two blocks that are injected at different points of a Gemini call:
+TWO independent guides, uploaded/edited separately and injected at different
+points of a Gemini call:
 
-  * business-logic rules  -> injected BEFORE any query/interpretation step
-  * formatting/tone rules  -> injected BEFORE generating chat answers / reports
+  * ANALYSIS guide (business-logic rules)  -> injected BEFORE any
+    query/interpretation step (e.g. the Com/V-A rule, CPRP formula, category
+    conventions).
+  * TEMPLATE guide (formatting/tone/report structure) -> injected BEFORE
+    generating chat answers or the final report.
 
-Splitting convention: a line containing '## FORMATTING' (case-insensitive)
-marks the boundary. Everything above is business logic, everything below is
-formatting/tone. If no marker is found, the whole text is treated as business
-logic and a small default formatting block is used.
+They are stored under separate keys and never derived from one another. A
+legacy combined upload (single file with a '## Formatting' marker) can still be
+split via split_guide(), but the two are managed independently in the UI.
 """
 from __future__ import annotations
 
@@ -35,11 +37,25 @@ _DEFAULT_FORMAT = (
 _MARKER = re.compile(r"^#+\s*format", re.IGNORECASE | re.MULTILINE)
 
 
+def save_analysis(db: Session, text: str) -> dict:
+    """Save the analysis / business-logic guide (used before interpretation)."""
+    settings_store.put(db, settings_store.PROMPT_GUIDE_LOGIC_KEY, text.strip())
+    return {"analysis_chars": len(text.strip())}
+
+
+def save_template(db: Session, text: str) -> dict:
+    """Save the report/format template guide (used before writing answers)."""
+    settings_store.put(db, settings_store.PROMPT_GUIDE_FORMAT_KEY, text.strip())
+    return {"template_chars": len(text.strip())}
+
+
 def save_guide(db: Session, text: str) -> dict:
+    """Legacy: split one combined upload into both guides at a '## Formatting'
+    marker. Retained for backward compatibility with old single-file uploads."""
     logic, fmt = split_guide(text)
     settings_store.put(db, settings_store.PROMPT_GUIDE_LOGIC_KEY, logic)
     settings_store.put(db, settings_store.PROMPT_GUIDE_FORMAT_KEY, fmt)
-    return {"logic_chars": len(logic), "format_chars": len(fmt)}
+    return {"analysis_chars": len(logic), "template_chars": len(fmt)}
 
 
 def split_guide(text: str) -> tuple[str, str]:

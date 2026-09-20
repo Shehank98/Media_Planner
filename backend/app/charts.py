@@ -63,18 +63,33 @@ def _finish(fig) -> bytes:
     return buf.read()
 
 
-def bar_chart(labels, values, title="", xlabel="", ylabel="", money=False, horizontal=True) -> bytes:
+def _fmt_val(v, money):
+    if money:
+        return _thousands(v, None)
+    return f"{v:,.0f}" if float(v).is_integer() else f"{v:,.1f}"
+
+
+def bar_chart(labels, values, title="", xlabel="", ylabel="", money=False, horizontal=True,
+              value_labels=True, single_color=False) -> bytes:
+    if not labels:
+        return _empty(title)
     fig, ax = plt.subplots(figsize=(8, max(3, 0.5 * len(labels) + 1.5)) if horizontal else (8, 4.5))
-    colors = [PALETTE[i % len(PALETTE)] for i in range(len(labels))]
+    colors = [LEAD] * len(labels) if single_color else [PALETTE[i % len(PALETTE)] for i in range(len(labels))]
     if horizontal:
-        ax.barh(labels, values, color=colors)
+        bars = ax.barh(labels, values, color=colors)
         ax.invert_yaxis()
         if money:
             ax.xaxis.set_major_formatter(FuncFormatter(_thousands))
+        if value_labels:
+            ax.bar_label(bars, labels=[_fmt_val(v, money) for v in values], padding=3, fontsize=9, color="#52606d")
+            ax.margins(x=0.15)
     else:
-        ax.bar(labels, values, color=colors)
+        bars = ax.bar(labels, values, color=colors)
         if money:
             ax.yaxis.set_major_formatter(FuncFormatter(_thousands))
+        if value_labels:
+            ax.bar_label(bars, labels=[_fmt_val(v, money) for v in values], padding=3, fontsize=9, color="#52606d")
+            ax.margins(y=0.15)
         plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
     ax.set_title(title)
     ax.set_xlabel(xlabel)
@@ -82,7 +97,65 @@ def bar_chart(labels, values, title="", xlabel="", ylabel="", money=False, horiz
     return _finish(fig)
 
 
+def stacked_bar(labels, series: dict[str, list], title="", ylabel="", money=False) -> bytes:
+    """Stacked vertical bars, one stack segment per series (e.g. medium over months)."""
+    if not labels:
+        return _empty(title)
+    import numpy as np
+
+    fig, ax = plt.subplots(figsize=(9, 4.8))
+    bottom = np.zeros(len(labels))
+    for i, (name, vals) in enumerate(series.items()):
+        vals = np.array([v or 0 for v in vals], dtype=float)
+        ax.bar(labels, vals, bottom=bottom, label=name, color=PALETTE[i % len(PALETTE)])
+        bottom += vals
+    if money:
+        ax.yaxis.set_major_formatter(FuncFormatter(_thousands))
+    ax.set_title(title)
+    ax.set_ylabel(ylabel)
+    ax.legend(frameon=False, ncol=min(len(series), 4), fontsize=9)
+    plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
+    return _finish(fig)
+
+
+def heatmap(rows, cols, matrix, title="", money=True) -> bytes:
+    """Advertiser x month spend heatmap."""
+    if not rows or not cols:
+        return _empty(title)
+    import numpy as np
+
+    data = np.array(matrix, dtype=float)
+    fig, ax = plt.subplots(figsize=(max(7, 0.7 * len(cols) + 3), max(3, 0.5 * len(rows) + 1.5)))
+    im = ax.imshow(data, aspect="auto", cmap="YlGnBu")
+    ax.set_xticks(range(len(cols)))
+    ax.set_xticklabels(cols, rotation=45, ha="right", fontsize=9)
+    ax.set_yticks(range(len(rows)))
+    ax.set_yticklabels(rows, fontsize=9)
+    # annotate
+    vmax = data.max() if data.size else 0
+    for i in range(len(rows)):
+        for j in range(len(cols)):
+            v = data[i, j]
+            if v > 0:
+                ax.text(j, i, _thousands(v, None), ha="center", va="center", fontsize=7,
+                        color="white" if v > vmax * 0.55 else "#1f2933")
+    cbar = fig.colorbar(im, ax=ax, shrink=0.8)
+    cbar.ax.yaxis.set_major_formatter(FuncFormatter(_thousands))
+    ax.set_title(title)
+    return _finish(fig)
+
+
+def _empty(title="") -> bytes:
+    fig, ax = plt.subplots(figsize=(7, 3))
+    ax.text(0.5, 0.5, "No data yet", ha="center", va="center", color="#9aa5b1", fontsize=13)
+    ax.set_title(title)
+    ax.axis("off")
+    return _finish(fig)
+
+
 def line_chart(x, series: dict[str, list], title="", xlabel="", ylabel="", money=False) -> bytes:
+    if not x or not series:
+        return _empty(title)
     fig, ax = plt.subplots(figsize=(9, 4.5))
     for i, (name, ys) in enumerate(series.items()):
         ax.plot(x, ys, marker="o", linewidth=2, color=PALETTE[i % len(PALETTE)], label=name)
@@ -98,6 +171,8 @@ def line_chart(x, series: dict[str, list], title="", xlabel="", ylabel="", money
 
 
 def pie_chart(labels, values, title="") -> bytes:
+    if not labels or not any(values):
+        return _empty(title)
     fig, ax = plt.subplots(figsize=(6.5, 5.5))
     colors = [PALETTE[i % len(PALETTE)] for i in range(len(labels))]
     wedges, _texts, autotexts = ax.pie(

@@ -18,8 +18,8 @@ def get_settings(db: Session = Depends(get_db)):
     return {
         "prime_start": time_to_str(start),
         "prime_end": time_to_str(end),
-        "prompt_guide_logic": prompt_guide.get_logic(db),
-        "prompt_guide_format": prompt_guide.get_format(db),
+        "analysis_guide": prompt_guide.get_logic(db),
+        "template_guide": prompt_guide.get_format(db),
     }
 
 
@@ -32,15 +32,23 @@ def set_prime_window(body: dict = Body(...), db: Session = Depends(get_db)):
     return {"ok": True}
 
 
-@router.put("/prompt-guide")
-def set_prompt_guide(body: dict = Body(...), db: Session = Depends(get_db)):
-    text = body.get("text", "")
-    if not text.strip():
-        raise HTTPException(400, "text is required")
-    return prompt_guide.save_guide(db, text)
+@router.put("/analysis-guide")
+def set_analysis_guide(body: dict = Body(...), db: Session = Depends(get_db)):
+    return prompt_guide.save_analysis(db, body.get("text", ""))
 
 
-@router.post("/prompt-guide/upload")
-async def upload_prompt_guide(file: UploadFile = File(...), db: Session = Depends(get_db)):
+@router.put("/template-guide")
+def set_template_guide(body: dict = Body(...), db: Session = Depends(get_db)):
+    return prompt_guide.save_template(db, body.get("text", ""))
+
+
+@router.post("/analysis-guide/upload")
+async def upload_analysis_guide(file: UploadFile = File(...), db: Session = Depends(get_db)):
     raw = (await file.read()).decode("utf-8", errors="replace")
-    return prompt_guide.save_guide(db, raw)
+    return prompt_guide.save_analysis(db, raw)
+
+
+@router.post("/template-guide/upload")
+async def upload_template_guide(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    raw = (await file.read()).decode("utf-8", errors="replace")
+    return prompt_guide.save_template(db, raw)

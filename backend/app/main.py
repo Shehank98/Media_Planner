@@ -13,7 +13,16 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .database import init_db
-from .routers import adex, basket, channel_view, chat, rate_cards, settings as settings_router, uploads
+from .routers import (
+    adex,
+    basket,
+    channel_view,
+    chat,
+    market,
+    rate_cards,
+    settings as settings_router,
+    uploads,
+)
 
 app = FastAPI(title="Media Analysis System", version="1.0.0")
 
@@ -39,6 +48,7 @@ def health():
 # API routers
 app.include_router(uploads.router)
 app.include_router(rate_cards.router)
+app.include_router(market.router)
 app.include_router(adex.router)
 app.include_router(basket.router)
 app.include_router(channel_view.router)

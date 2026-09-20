@@ -44,8 +44,11 @@ body {
 }
 .brand-title { font-weight: 700; color: #fff; font-size: 15px; }
 .brand-sub { font-size: 12px; color: #9fb0c4; }
-.nav { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; flex: 1; }
+.nav { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; flex: 1; }
 .nav hr { border: none; border-top: 1px solid rgba(255,255,255,0.12); margin: 10px 4px; }
+.nav-group { font-size: 10.5px; text-transform: uppercase; letter-spacing: .09em; color: #7f92aa; padding: 12px 14px 4px; font-weight: 700; }
+.nav-item .ic { display: inline-block; width: 20px; color: #9fb0c4; }
+.nav-item.active .ic { color: var(--gold); }
 .nav-item {
   text-align: left; background: transparent; border: none; color: #cfd9e6;
   padding: 11px 14px; border-radius: 9px; font-size: 14px; cursor: pointer;
@@ -60,15 +63,32 @@ body {
 
 /* Main */
 .main { flex: 1; padding: 30px 36px; max-width: 1200px; }
-.page-head h1 { margin: 0 0 4px; font-size: 24px; color: var(--navy); font-weight: 800; }
-.page-head p { margin: 0 0 20px; color: var(--muted); font-size: 14px; max-width: 780px; }
+.page-head h1 { margin: 0 0 6px; font-family: 'Fraunces', Georgia, serif; font-size: 30px; color: var(--navy); font-weight: 700; letter-spacing: -0.01em; }
+.page-head p { margin: 0 0 22px; color: var(--muted); font-size: 14px; max-width: 820px; line-height: 1.5; }
+
+/* KPI tiles */
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; margin-bottom: 20px; }
+.kpi { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; box-shadow: var(--shadow); position: relative; overflow: hidden; }
+.kpi::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--gold); }
+.kpi .kpi-label { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+.kpi .kpi-value { font-size: 26px; font-weight: 800; color: var(--navy); margin-top: 4px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.kpi .kpi-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.kpi.accent::before { background: var(--navy); }
+
+/* AI analysis card */
+.ai-card { border: 1px solid #dfe6f0; background: linear-gradient(180deg, #fbfcfe 0%, #f6f9fd 100%); }
+.ai-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.ai-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--navy); background: #e7f0fa; padding: 4px 10px; border-radius: 999px; }
+.ai-badge::before { content: "✦"; color: var(--gold); }
+.ai-body { white-space: pre-wrap; line-height: 1.62; font-size: 14.5px; color: #2b3743; }
+.tag { display: inline-block; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); background: #eef1f4; border-radius: 6px; padding: 2px 8px; vertical-align: middle; margin-left: 6px; }
 
 /* Cards */
 .card {
   background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
   padding: 20px 22px; box-shadow: var(--shadow); margin-bottom: 20px;
 }
-.card h3 { margin: 0 0 6px; font-size: 16px; color: var(--navy); }
+.card h3 { margin: 0 0 6px; font-size: 16.5px; color: var(--navy); font-weight: 700; }
 .card h4 { margin: 18px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 
@@ -135,7 +155,9 @@ tr:hover td { background: #fafbfc; }
   position: fixed; bottom: 24px; right: 24px; background: var(--navy-700); color: #fff;
   padding: 12px 18px; border-radius: 10px; box-shadow: var(--shadow); font-size: 14px; z-index: 100;
 }
-.section-title { font-weight: 700; color: var(--navy); margin: 4px 0 10px; font-size: 15px; }
+.section-title { font-weight: 700; color: var(--navy); margin: 4px 0 12px; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+.section-title::before { content: ""; width: 4px; height: 15px; background: var(--gold); border-radius: 2px; display: inline-block; }
+.chart-img { width: 100%; max-width: 860px; }
 .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--navy); border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle; }
 @keyframes spin { to { transform: rotate(360deg); } }
 

@@ -6,7 +6,7 @@
   <title>Media Analysis System</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
@@ -16,17 +16,20 @@
         <div class="brand-mark">M</div>
         <div>
           <div class="brand-title">Media Analysis</div>
-          <div class="brand-sub">Pitch &amp; Planning</div>
+          <div class="brand-sub">Market Intelligence</div>
         </div>
       </div>
       <nav class="nav">
-        <button class="nav-item active" data-tab="tab1">📊 Category / Pitch</button>
-        <button class="nav-item" data-tab="tab2">🧺 Channel Basket &amp; CPRP</button>
-        <button class="nav-item" data-tab="tab3">📺 Channel View</button>
-        <hr />
-        <button class="nav-item" data-tab="ratecards">💳 Rate Cards</button>
-        <button class="nav-item" data-tab="data">📁 Data &amp; Uploads</button>
-        <button class="nav-item" data-tab="settings">⚙️ Settings</button>
+        <div class="nav-group">Overview</div>
+        <button class="nav-item active" data-tab="market"><span class="ic">◎</span> Market Overview</button>
+        <div class="nav-group">Analysis</div>
+        <button class="nav-item" data-tab="tab1"><span class="ic">▤</span> Category / Pitch</button>
+        <button class="nav-item" data-tab="tab2"><span class="ic">◱</span> Basket &amp; CPRP</button>
+        <button class="nav-item" data-tab="tab3"><span class="ic">▧</span> Channel View</button>
+        <div class="nav-group">Data</div>
+        <button class="nav-item" data-tab="ratecards"><span class="ic">▦</span> Rate Cards</button>
+        <button class="nav-item" data-tab="data"><span class="ic">⤓</span> Uploads</button>
+        <button class="nav-item" data-tab="settings"><span class="ic">⚙</span> Settings</button>
       </nav>
       <div class="sidebar-foot">
         <span id="health-dot" class="dot"></span>
@@ -35,13 +38,23 @@
     </aside>
 
     <main class="main">
+      <!-- MARKET OVERVIEW -->
+      <section class="tab" id="market">
+        <header class="page-head">
+          <h1>Market Overview</h1>
+          <p>The whole market at a glance — spend, share, movement and where the money is going. All figures are computed from your data (Com-only spend); the AI reads the numbers, it never invents them.</p>
+        </header>
+        <div id="mkt-kpis" class="kpis"></div>
+        <div id="mkt-ai" class="card ai-card" hidden></div>
+        <div id="mkt-results" class="results"></div>
+      </section>
+
       <!-- TAB 1 -->
-      <section class="tab" id="tab1">
+      <section class="tab" id="tab1" hidden>
         <header class="page-head">
           <h1>Category / Pitch Analysis</h1>
-          <p>Adex spend across TV / Radio / Press. All spend is <strong>Com-only</strong> — V/A bonus airtime is tracked separately, never in spend.</p>
+          <p>Drill into a category and its advertisers across TV / Radio / Press. Spend is <strong>Com-only</strong>; V/A bonus airtime is tracked separately.</p>
         </header>
-
         <div class="card filters">
           <div class="field">
             <label>Product Group(s)</label>
@@ -60,14 +73,14 @@
             </div>
           </div>
         </div>
-
+        <div id="t1-kpis" class="kpis"></div>
+        <div id="t1-ai" class="card ai-card" hidden></div>
         <div id="t1-results" class="results"></div>
-
         <div class="card">
-          <h3>Ask a question</h3>
-          <p class="muted">Gemini narrates the pre-computed figures in the agency tone — it never invents numbers.</p>
+          <h3>Ask a follow-up</h3>
+          <p class="muted">Gemini narrates the pre-computed figures in your agency tone.</p>
           <div class="ask-row">
-            <input id="t1-q" type="text" placeholder="e.g. How did the category split across TV and radio?" />
+            <input id="t1-q" type="text" placeholder="e.g. How did Sampath Bank spend on radio last year?" />
             <button class="btn primary" id="t1-ask">Ask</button>
           </div>
           <div id="t1-answer" class="answer"></div>
@@ -78,9 +91,8 @@
       <section class="tab" id="tab2" hidden>
         <header class="page-head">
           <h1>Channel Basket &amp; Programme Selection</h1>
-          <p>CPRP = 30-second-equivalent rate ÷ TVR. Lower CPRP = more cost-efficient. Raw rate &amp; duration shown alongside so the normalisation is never hidden.</p>
+          <p>CPRP = 30-second-equivalent rate ÷ TVR. Lower CPRP = more cost-efficient. Raw rate &amp; duration are shown alongside so the normalisation is never hidden.</p>
         </header>
-
         <div class="card filters">
           <div class="field">
             <label>Channel</label>
@@ -102,9 +114,7 @@
             <button class="btn primary" id="t2-run">Show Programmes</button>
           </div>
         </div>
-
         <div id="t2-results" class="results"></div>
-
         <div class="card" id="t2-basket-card" hidden>
           <h3>Basket builder</h3>
           <p class="muted">Selected programmes — combined TVR, reach, cost and blended CPRP.</p>
@@ -154,12 +164,12 @@
       <section class="tab" id="data" hidden>
         <header class="page-head">
           <h1>Data &amp; Uploads</h1>
-          <p>Large files parse in the background. Nothing is stored until you confirm the review.</p>
+          <p>Large files parse in the background. Nothing is stored until you confirm the review. Adex (spend) and TVR (ratings) are two separate datasets.</p>
         </header>
         <div class="grid-2">
           <div class="card">
-            <h3>Adex / Media Watch data (Tab 1 &amp; Tab 3)</h3>
-            <p class="muted">Advertising-spend export (Product_Group, Advertiser, Cost, …). "Adex" and "media watch" mean this dataset.</p>
+            <h3>Adex / Media Watch data <span class="tag">Tab 1 &amp; 3</span></h3>
+            <p class="muted">Advertising-spend export (Product_Group, Advertiser, Cost…). "Adex" and "media watch" mean this dataset.</p>
             <input type="file" id="adex-file" accept=".xlsx,.xls" />
             <button class="btn primary" id="adex-upload">Upload &amp; Parse</button>
             <div id="adex-status" class="status"></div>
@@ -168,8 +178,8 @@
             <div id="adex-batches"></div>
           </div>
           <div class="card">
-            <h3>TVR data (Tab 2)</h3>
-            <p class="muted">Television ratings export (Rank, Channel, Program, TVR, Reach, …). A separate dataset from adex — uploaded on its own.</p>
+            <h3>TVR data <span class="tag">Tab 2</span></h3>
+            <p class="muted">Television ratings export (Rank, Channel, Program, TVR, Reach…). A separate dataset — uploaded on its own.</p>
             <input type="file" id="mw-file" accept=".xlsx,.xls" />
             <button class="btn primary" id="mw-upload">Upload &amp; Parse</button>
             <div id="mw-status" class="status"></div>
@@ -193,14 +203,25 @@
             <button class="btn primary" id="prime-save">Save</button>
           </div>
         </div>
-        <div class="card">
-          <h3>Prompt guide</h3>
-          <p class="muted">Split at a "## Formatting" heading: business-logic rules injected before analysis, formatting/tone rules before writing answers.</p>
-          <input type="file" id="guide-file" accept=".txt,.md" />
-          <button class="btn" id="guide-upload">Upload file</button>
-          <textarea id="guide-text" rows="10" placeholder="Business logic rules…&#10;&#10;## Formatting&#10;Tone rules…"></textarea>
-          <button class="btn primary" id="guide-save">Save guide</button>
-          <div id="guide-status" class="status"></div>
+        <div class="grid-2">
+          <div class="card">
+            <h3>Analysis rules <span class="tag">business logic</span></h3>
+            <p class="muted">Injected <strong>before</strong> any interpretation — the Com/V-A rule, CPRP formula, category conventions, definitions.</p>
+            <input type="file" id="analysis-file" accept=".txt,.md" />
+            <button class="btn" id="analysis-upload">Upload file</button>
+            <textarea id="analysis-text" rows="10" placeholder="e.g. Spend excludes V/A rows. CPRP = 30s rate / TVR. Banking category includes…"></textarea>
+            <button class="btn primary" id="analysis-save">Save analysis rules</button>
+            <div id="analysis-status" class="status"></div>
+          </div>
+          <div class="card">
+            <h3>Report template guide <span class="tag">tone &amp; format</span></h3>
+            <p class="muted">Injected <strong>before</strong> writing answers/reports — house tone, structure, section order, phrasing.</p>
+            <input type="file" id="template-file" accept=".txt,.md" />
+            <button class="btn" id="template-upload">Upload file</button>
+            <textarea id="template-text" rows="10" placeholder="e.g. Lead with the headline insight. Use short paragraphs. Structure: Context → Category → Competitors → Recommendation…"></textarea>
+            <button class="btn primary" id="template-save">Save template guide</button>
+            <div id="template-status" class="status"></div>
+          </div>
         </div>
       </section>
     </main>

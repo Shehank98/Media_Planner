@@ -33,6 +33,23 @@ into spend. This filter lives in `services/adex_analysis.py` (`COM = va_com == '
 
 ---
 
+## Market Overview (dashboard)
+
+The landing view answers "what's happening in the market" at a glance:
+
+- **KPI tiles** — total market spend, advertisers, channels, categories, date
+  range, leading category/advertiser, and bonus V/A airtime.
+- **Monthly spend by medium** (stacked), **Top categories**, **Share of Voice
+  over time**, an **advertiser × month spend heatmap**, and **biggest movers**.
+- **Growth analysis** — gainers, decliners and **new entrants** (2nd half of the
+  date range vs the 1st).
+- **AI market read** — Gemini reads the pre-computed figures and writes a sharp
+  summary (who's winning/losing, where spend concentrates, one recommendation).
+  It only ever sees computed numbers.
+
+The same endpoints accept a `product_groups` filter, so Tab 1 reuses them for a
+category-scoped dashboard with its own KPI tiles and AI analysis.
+
 ## The three tabs
 
 ### Tab 1 — Category / Pitch Analysis (adex data)
@@ -99,12 +116,17 @@ tables until you `POST /api/jobs/{id}/confirm`. Every stored row carries a
 
 ---
 
-## Prompt guide
+## Prompt guides (two, independent)
 
-Upload a `.txt`/`.md` guide (re-uploadable). It's split at a `## Formatting`
-heading into two blocks: **business-logic rules** (injected before any
-query/interpretation) and **formatting/tone rules** (injected before writing
-answers/reports). Managed under **Settings**.
+Managed separately under **Settings** — each editable inline or uploadable as a
+`.txt`/`.md` file:
+
+- **Analysis rules** (business logic) — injected **before** any interpretation:
+  the Com/V-A rule, CPRP formula, category conventions, definitions.
+- **Report template guide** (tone & format) — injected **before** writing chat
+  answers or the report: house tone, structure, section order, phrasing.
+
+They are stored under separate keys and never derived from one another.
 
 ---
 
@@ -165,6 +187,9 @@ Use `--dry-run` to preview the plan without writing.
 | POST | `/api/uploads/{rate_card\|adex\|tvr}` | async upload |
 | GET  | `/api/jobs/{id}` · `/review` | poll / review |
 | POST | `/api/jobs/{id}/confirm` | commit reviewed data |
+| GET  | `/api/market/overview` · `/growth` · `/sov-trend` | market dashboard data |
+| GET  | `/api/market/charts/{trend\|sov\|heatmap\|top-categories\|growth}.png` | dashboard charts |
+| POST | `/api/market/ai-read` | AI market read over computed figures |
 | GET  | `/api/tab1/*` | category analysis + charts |
 | POST | `/api/tab1/report` | PDF / Word pitch report |
 | GET  | `/api/tab2/best-programmes` · `POST /api/tab2/basket` | CPRP + basket |
@@ -187,8 +212,9 @@ backend/app/
   jobs.py            async upload orchestration (stage → review → confirm)
   charts.py          server-side matplotlib charts (shared by app + reports)
   parsers/           rate_card / adex / tvr (per-sheet header reading)
-  services/          rate_cards, adex_analysis (Tab1/3), basket (Tab2),
-                     ingest, report (PDF/Word), restricted_sql, settings_store
+  services/          rate_cards, adex_analysis (Tab1/3), market (dashboard +
+                     SoV/growth/heatmap), basket (Tab2), ingest, report
+                     (PDF/Word), restricted_sql, settings_store
   llm/               gemini client + prompt_guide store
   routers/           HTTP endpoints per tab
 frontend/            single-page UI (index.html / styles.css / app.js)
