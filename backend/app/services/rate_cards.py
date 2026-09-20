@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from ..models import Batch, RateCard
 from ..utils.days import parse_days
 from ..utils.timeparse import in_window, parse_time
-from . import settings_store
+from . import colors, settings_store
 
 
 def commit_review(db: Session, filename: str, blocks: list[dict]) -> dict:
@@ -75,6 +75,7 @@ def commit_review(db: Session, filename: str, blocks: list[dict]) -> dict:
 
     db.add(Batch(id=batch_id, kind="rate_card", filename=filename, row_count=total))
     db.commit()
+    colors.clear_cache()
     return {"batch_id": batch_id, "rows": total}
 
 
@@ -155,6 +156,7 @@ def delete_batch(db: Session, batch_id: str) -> int:
     n = db.execute(delete(RateCard).where(RateCard.batch_id == batch_id)).rowcount
     db.execute(delete(Batch).where(Batch.id == batch_id))
     db.commit()
+    colors.clear_cache()
     return n or 0
 
 

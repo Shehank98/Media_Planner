@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from .. import charts
 from ..database import get_db
-from ..services import adex_analysis
+from ..services import adex_analysis, colors as colors_svc
 
 router = APIRouter(prefix="/api/tab3", tags=["tab3-channel-first"])
 
@@ -33,9 +33,11 @@ def advertiser_programmes(channel: str, advertiser: str, top: int = 15, db: Sess
 @router.get("/charts/advertisers.png")
 def chart_advertisers(channel: str, db: Session = Depends(get_db)):
     data = adex_analysis.channel_first(db, channel, top=12)["advertisers"]
+    names = [a["advertiser"] for a in data]
     png = charts.bar_chart(
-        [a["advertiser"] for a in data], [a["spend"] for a in data],
-        title=f"Top Advertisers on {channel}", money=True,
+        names, [a["spend"] for a in data],
+        title="", money=True,
+        colors=colors_svc.color_list(colors_svc.advertiser_colors(db), names),
     )
     return Response(png, media_type="image/png")
 
@@ -45,6 +47,6 @@ def chart_programmes(channel: str, db: Session = Depends(get_db)):
     data = adex_analysis.channel_first(db, channel, top=12)["programmes"]
     png = charts.bar_chart(
         [p["programme"] for p in data], [p["spend"] for p in data],
-        title=f"Top Programmes on {channel}", money=True,
+        title="", money=True,
     )
     return Response(png, media_type="image/png")

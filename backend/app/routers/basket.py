@@ -37,7 +37,7 @@ def cprp_chart(channel: str | None = None, slot: str | None = None, limit: int =
     png = charts.bar_chart(
         [f"{p['programme']} ({p['channel']})" for p in data],
         [p["cprp"] for p in data],
-        title="CPRP by Programme (lower = more efficient)",
+        title="",
         xlabel="CPRP",
     )
     return Response(png, media_type="image/png")

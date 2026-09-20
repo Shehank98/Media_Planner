@@ -11,9 +11,16 @@ from sqlalchemy.orm import Session
 from .. import charts
 from ..database import get_db
 from ..llm import gemini, prompt_guide
-from ..services import market
+from ..services import colors as colors_svc, market
 
 router = APIRouter(prefix="/api/market", tags=["market-overview"])
+
+
+@router.get("/colors")
+def color_maps(db: Session = Depends(get_db)):
+    """Stable advertiser/channel/medium colour maps for the frontend so table
+    swatches match server-rendered chart colours exactly."""
+    return colors_svc.all_maps(db)
 
 
 @router.get("/overview")
@@ -41,28 +48,30 @@ def sov_trend(product_groups: list[str] | None = Query(None), top_n: int = 5, db
 def chart_top_categories(limit: int = 10, db: Session = Depends(get_db)):
     data = market.top_categories(db, limit)
     png = charts.bar_chart([d["category"] for d in data], [d["spend"] for d in data],
-                           title="Top Categories by Spend", money=True, single_color=True)
+                           title="", money=True, single_color=True)
     return Response(png, media_type="image/png")
 
 
 @router.get("/charts/trend.png")
 def chart_trend(product_groups: list[str] | None = Query(None), db: Session = Depends(get_db)):
     data = market.market_trend(db, product_groups)
-    png = charts.stacked_bar(data["labels"], data["series"], title="Monthly Spend by Medium", money=True)
+    png = charts.stacked_bar(data["labels"], data["series"], title="", money=True)
     return Response(png, media_type="image/png")
 
 
 @router.get("/charts/sov.png")
 def chart_sov(product_groups: list[str] | None = Query(None), top_n: int = 5, db: Session = Depends(get_db)):
     data = market.sov_trend(db, product_groups, top_n)
-    png = charts.line_chart(data["labels"], data["series"], title="Share of Voice Over Time (%)", ylabel="% of spend")
+    amap = colors_svc.advertiser_colors(db)
+    png = charts.line_chart(data["labels"], data["series"], title="", ylabel="% of spend",
+                            colors=[amap.get(n, charts.OTHERS) for n in data["series"].keys()])
     return Response(png, media_type="image/png")
 
 
 @router.get("/charts/heatmap.png")
 def chart_heatmap(product_groups: list[str] | None = Query(None), top_n: int = 10, db: Session = Depends(get_db)):
     data = market.heatmap(db, product_groups, top_n)
-    png = charts.heatmap(data["rows"], data["cols"], data["matrix"], title="Advertiser Spend Heatmap (by month)")
+    png = charts.heatmap(data["rows"], data["cols"], data["matrix"], title="")
     return Response(png, media_type="image/png")
 
 
@@ -71,8 +80,8 @@ def chart_growth(product_groups: list[str] | None = Query(None), db: Session = D
     g = market.growth(db, product_groups)
     movers = (g["gainers"] + g["losers"])
     movers.sort(key=lambda x: x["delta"])
-    png = charts.bar_chart([m["advertiser"] for m in movers], [m["delta"] for m in movers],
-                           title="Biggest Movers (spend change, 2nd half vs 1st)", money=True)
+    png = charts.delta_bar([m["advertiser"] for m in movers], [m["delta"] for m in movers],
+                           title="")
     return Response(png, media_type="image/png")
 
 

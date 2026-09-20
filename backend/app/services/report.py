@@ -15,10 +15,10 @@ import io
 
 from sqlalchemy.orm import Session
 
-from .. import charts
+from .. import charts, palette
 from ..llm import gemini, prompt_guide
 from . import adex_analysis as ax
-from . import basket, market
+from . import basket, colors, market
 
 # --------------------------------------------------------------------------
 # Data
@@ -61,6 +61,10 @@ def gather(db: Session, product_groups: list[str], lead_advertiser: str | None) 
     progs = [p for p in basket.best_programmes(db, limit=40) if p.get("cprp") is not None]
     progs.sort(key=lambda x: x["cprp"])
     data["recommended_basket"] = progs[:8]
+
+    # Stable colour maps so report charts match the app and each other.
+    data["_amap"] = colors.advertiser_colors(db)
+    data["_cmap"] = colors.channel_colors(db)
     return data
 
 
@@ -69,40 +73,51 @@ def gather(db: Session, product_groups: list[str], lead_advertiser: str | None) 
 # --------------------------------------------------------------------------
 def build_charts(data: dict) -> dict[str, bytes]:
     out: dict[str, bytes] = {}
+    amap = data.get("_amap", {})
+    cmap = data.get("_cmap", {})
+    def acols(names):
+        return [amap.get(n, palette.OTHERS) for n in names]
+    def ccols(names):
+        return [cmap.get(n, palette.OTHERS) for n in names]
     tr = data["trend"]
     if tr["labels"]:
-        out["trend"] = charts.line_chart(tr["labels"], tr["series"], title="Total Category Spend by Month", money=True)
+        out["trend"] = charts.line_chart(tr["labels"], tr["series"], title="Total category spend by month", money=True)
     ms = data["medium_split"]
     if ms:
-        out["medium"] = charts.pie_chart([m["medium"] for m in ms], [m["spend"] for m in ms], title="Medium Split")
+        out["medium"] = charts.pie_chart([m["medium"] for m in ms], [m["spend"] for m in ms],
+                                         title="Medium split", color_kind="medium")
     ta = data["top_advertisers"]
     if ta:
-        out["ranking"] = charts.bar_chart([a["advertiser"] for a in ta[:8]], [a["share_pct"] for a in ta[:8]],
-                                          title="Top Advertisers by Share of Spend (%)", single_color=True)
+        names = [a["advertiser"] for a in ta[:8]]
+        out["ranking"] = charts.bar_chart(names, [a["share_pct"] for a in ta[:8]],
+                                          title="Advertisers by share of spend (%)", colors=acols(names))
     sov = data["sov_trend"]
     if sov["labels"]:
-        out["sov"] = charts.line_chart(sov["labels"], sov["series"], title="Share of Voice Over Time (%)", ylabel="% of spend")
+        out["sov"] = charts.line_chart(sov["labels"], sov["series"], title="Share of voice over time (%)",
+                                       ylabel="% of spend", colors=acols(list(sov["series"].keys())))
     cc = data["category_channels"]
     if cc:
-        out["channels"] = charts.bar_chart([c["channel"] for c in cc], [c["spend"] for c in cc],
-                                          title="Top Channels by Category Spend", money=True, single_color=True)
+        names = [c["channel"] for c in cc]
+        out["channels"] = charts.bar_chart(names, [c["spend"] for c in cc],
+                                          title="Top channels by category spend", money=True, colors=ccols(names))
     dd = data.get("deep_dive")
     if dd:
         if dd["trend"]["labels"]:
             out["dd_trend"] = charts.line_chart(dd["trend"]["labels"], dd["trend"]["series"],
-                                                title=f"{dd['advertiser']} Spend by Month", money=True)
+                                                title=f"{dd['advertiser']} spend by month", money=True)
         if dd["medium_split"]:
             out["dd_medium"] = charts.pie_chart([m["medium"] for m in dd["medium_split"]],
                                                 [m["spend"] for m in dd["medium_split"]],
-                                                title=f"{dd['advertiser']} Medium Split")
+                                                title=f"{dd['advertiser']} medium split", color_kind="medium")
         if dd["channels"]:
-            out["dd_channels"] = charts.bar_chart([c["channel"] for c in dd["channels"]],
-                                                  [c["spend"] for c in dd["channels"]],
-                                                  title=f"{dd['advertiser']} Top Channels", money=True, single_color=True)
+            names = [c["channel"] for c in dd["channels"]]
+            out["dd_channels"] = charts.bar_chart(names, [c["spend"] for c in dd["channels"]],
+                                                  title=f"{dd['advertiser']} top channels", money=True, colors=ccols(names))
     rb = data["recommended_basket"]
     if rb:
         out["cprp"] = charts.bar_chart([f"{p['programme']} ({p['channel']})" for p in rb],
-                                       [p["cprp"] for p in rb], title="Most Cost-Efficient Programmes (CPRP)")
+                                       [p["cprp"] for p in rb], title="Most cost-efficient programmes (CPRP)",
+                                       colors=ccols([p["channel"] for p in rb]))
     return out
 
 
@@ -250,10 +265,10 @@ def build_html(db: Session, product_groups: list[str], lead_advertiser: str | No
     parts = [f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Pitch Report - {html.escape(cat)}</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
 <style>{_REPORT_CSS}</style></head><body><div class="rp">
 <header class="rp-cover">
-  <div class="rp-eyebrow">Media Analysis - Category Pitch Report</div>
+  <div class="rp-kicker">Category pitch report</div>
   <h1>{html.escape(cat)}</h1>
   <div class="rp-meta">
     <span>Advertisers: {html.escape(lead_advertiser or "All advertisers in category")}</span>
@@ -328,7 +343,7 @@ def build_pdf(db: Session, product_groups: list[str], lead_advertiser: str | Non
     cat = ", ".join(product_groups)
 
     styles = getSampleStyleSheet()
-    navy = colors.HexColor("#1f3a5f")
+    navy = colors.HexColor("#20242A")
     title = ParagraphStyle("t", parent=styles["Title"], textColor=navy, fontSize=24, spaceAfter=6)
     h2 = ParagraphStyle("h2", parent=styles["Heading2"], textColor=navy, spaceBefore=14)
     body = ParagraphStyle("b", parent=styles["BodyText"], fontSize=10.5, leading=15)
@@ -407,7 +422,7 @@ def build_docx(db: Session, product_groups: list[str], lead_advertiser: str | No
     s = get_sections(db, data)
     ov = data["overview"]
     cat = ", ".join(product_groups)
-    navy = RGBColor(0x1F, 0x3A, 0x5F)
+    navy = RGBColor(0x20, 0x24, 0x2A)
 
     doc = Document()
     t = doc.add_heading("Category Pitch Report", level=0)
@@ -464,30 +479,32 @@ def build_docx(db: Session, product_groups: list[str], lead_advertiser: str | No
 
 
 _REPORT_CSS = """
-:root{--navy:#1f3a5f;--gold:#c9a227;--ink:#1f2933;--muted:#6b7684;--line:#e4e8ec;--bg:#eef1f5;}
-*{box-sizing:border-box;} body{margin:0;background:var(--bg);font-family:'Inter',system-ui,sans-serif;color:var(--ink);}
-.rp{max-width:900px;margin:0 auto;background:#fff;box-shadow:0 4px 30px rgba(16,32,55,.08);}
-.rp-cover{background:linear-gradient(135deg,#1f3a5f,#16293f);color:#fff;padding:48px 56px 36px;}
-.rp-eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#c9a227;font-weight:700;}
-.rp-cover h1{font-family:'Fraunces',Georgia,serif;font-size:40px;margin:10px 0 14px;font-weight:700;line-height:1.05;}
-.rp-meta{display:flex;flex-wrap:wrap;gap:8px 22px;font-size:13px;color:#c6d3e2;}
-.rp-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-top:26px;}
-.rp-kpi{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:12px 14px;}
-.rp-kpi span{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:#a9bcd2;}
-.rp-kpi strong{display:block;font-size:18px;margin-top:4px;font-weight:700;}
-.rp-sec{padding:30px 56px;border-bottom:1px solid var(--line);}
-.rp-sec h2{font-family:'Fraunces',Georgia,serif;color:var(--navy);font-size:22px;margin:0 0 12px;padding-left:12px;border-left:4px solid var(--gold);}
-.rp-sec h3{font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:16px 0 8px;}
-.rp-narr{font-size:15px;line-height:1.65;color:#2b3743;margin:0 0 14px;}
-.rp-muted{color:var(--muted);font-size:13px;}
-.rp-chart{width:100%;border:1px solid var(--line);border-radius:10px;margin:8px 0;background:#fff;}
+:root{--ink:#1A1D21;--ink2:#3B3F44;--muted:#6A6E73;--line:#E3E5E1;--line2:#CFD2CD;--paper:#F4F5F3;--accent:#0F6E63;--graphite:#20242A;--mono:'IBM Plex Mono',ui-monospace,monospace;}
+*{box-sizing:border-box;} body{margin:0;background:var(--paper);font-family:'IBM Plex Sans',system-ui,sans-serif;color:var(--ink);font-size:14px;}
+.rp{max-width:880px;margin:0 auto;background:#fff;border:1px solid var(--line);}
+.rp-cover{background:var(--graphite);color:#EDEFF1;padding:40px 48px 32px;}
+.rp-kicker{font-size:12.5px;color:#8AB6AE;font-weight:500;}
+.rp-cover h1{font-size:32px;margin:8px 0 14px;font-weight:600;line-height:1.08;letter-spacing:-0.02em;color:#fff;}
+.rp-meta{display:flex;flex-wrap:wrap;gap:6px 24px;font-size:12.5px;color:#A6ABB2;}
+.rp-kpis{display:flex;flex-wrap:wrap;margin-top:24px;border:1px solid #363B43;border-radius:4px;overflow:hidden;}
+.rp-kpi{flex:1 1 130px;padding:11px 15px;border-left:1px solid #363B43;}
+.rp-kpi:first-child{border-left:none;}
+.rp-kpi span{display:block;font-size:11px;color:#8B9097;}
+.rp-kpi strong{display:block;font-size:17px;margin-top:3px;font-weight:600;font-family:var(--mono);color:#fff;}
+.rp-sec{padding:26px 48px;border-bottom:1px solid var(--line);}
+.rp-sec h2{color:var(--ink);font-size:16px;margin:0 0 12px;font-weight:600;letter-spacing:-0.01em;}
+.rp-sec h3{font-size:12px;color:var(--muted);margin:16px 0 8px;font-weight:600;}
+.rp-narr{font-size:14px;line-height:1.62;color:var(--ink2);margin:0 0 14px;max-width:72ch;}
+.rp-muted{color:var(--muted);font-size:12.5px;}
+.rp-chart{width:100%;border:1px solid var(--line);border-radius:4px;margin:8px 0;background:#fff;}
 .rp-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start;}
-.rp-nodata{padding:18px;background:#f6f8fa;border:1px dashed var(--line);border-radius:10px;color:var(--muted);font-size:13px;text-align:center;}
+.rp-nodata{padding:16px;background:var(--paper);border:1px dashed var(--line2);border-radius:4px;color:var(--muted);font-size:12.5px;text-align:center;}
 .rp-table{width:100%;border-collapse:collapse;font-size:13px;margin:10px 0;}
-.rp-table th{background:var(--navy);color:#fff;text-align:left;padding:9px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.03em;}
-.rp-table td{padding:8px 12px;border-bottom:1px solid var(--line);}
-.rp-table tbody tr:nth-child(even){background:#f6f8fa;}
-.rp-table .num{text-align:right;font-variant-numeric:tabular-nums;}
-.rp-foot{padding:20px 56px 40px;color:var(--muted);font-size:12px;}
+.rp-table th{background:var(--paper);color:var(--muted);text-align:left;padding:8px 12px;font-size:11.5px;font-weight:600;border-bottom:1px solid var(--line2);}
+.rp-table td{padding:7px 12px;border-bottom:1px solid var(--line);color:var(--ink2);}
+.rp-table tbody tr:nth-child(even) td{background:var(--paper);}
+.rp-table .num{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--mono);font-size:12.5px;}
+.rp-table th.num{font-family:inherit;}
+.rp-foot{padding:20px 48px 36px;color:var(--muted);font-size:12px;}
 @media(max-width:640px){.rp-cover,.rp-sec,.rp-foot{padding-left:22px;padding-right:22px;}.rp-grid{grid-template-columns:1fr;}}
 """

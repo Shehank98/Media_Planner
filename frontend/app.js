@@ -29,6 +29,32 @@ const qs = (params) => {
 };
 const selected = (sel) => Array.from($(sel).selectedOptions).map((o) => o.value);
 
+// Colour system - MUST match backend/app/palette.py so table swatches line up
+// with server-rendered chart colours (same advertiser/channel = same colour).
+const CATEGORICAL = ["#3F6DA6", "#B4523C", "#C08A2E", "#5B8C5A", "#6B5B95", "#B23B6E", "#4B7B8C", "#8A6D3B", "#A0553B"];
+const OTHERS_COLOR = "#8A8D91";
+const MEDIUM_COLORS = { TV: "#1C5D7C", Radio: "#B8823A", Press: "#6C7A45" };
+function colorFor(name) {
+  if (!name) return OTHERS_COLOR;
+  if (String(name).trim().toLowerCase() === "others") return OTHERS_COLOR;
+  let h = 2166136261;
+  for (const ch of String(name)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; }
+  return CATEGORICAL[h % CATEGORICAL.length];
+}
+// Stable colour maps fetched from the server (advertisers/channels assigned
+// over the full sorted set) so swatches match chart colours exactly. Falls
+// back to the local hash until loaded / for unknown names.
+let COLOR_MAPS = { advertisers: {}, channels: {}, mediums: MEDIUM_COLORS };
+async function loadColorMaps() {
+  try { COLOR_MAPS = await api("/api/market/colors"); } catch (_) {}
+}
+function swatch(name, isMedium) {
+  let c;
+  if (isMedium) c = (COLOR_MAPS.mediums && COLOR_MAPS.mediums[name]) || MEDIUM_COLORS[name] || OTHERS_COLOR;
+  else c = (COLOR_MAPS.advertisers && COLOR_MAPS.advertisers[name]) || (COLOR_MAPS.channels && COLOR_MAPS.channels[name]) || colorFor(name);
+  return el("span", { class: "swatch", style: `background:${c}` });
+}
+
 async function api(path, opts) {
   const res = await fetch(path, opts);
   if (!res.ok) {
@@ -91,7 +117,7 @@ function onTabShow(tab) {
   try {
     const h = await api("/api/health");
     $("#health-dot").classList.add("ok");
-    $("#health-text").textContent = h.gemini_configured ? "Online · Gemini ready" : "Online · no Gemini key";
+    $("#health-text").textContent = h.gemini_configured ? "Online, Gemini ready" : "Online, no Gemini key";
   } catch (_) {
     $("#health-dot").classList.add("bad");
     $("#health-text").textContent = "API offline";
@@ -256,7 +282,7 @@ async function runTab1() {
 
     const vaCard = el("div", { class: "card" });
     vaCard.append(el("div", { class: "section-title" }, "Bonus value received (V/A - excluded from spend)"));
-    vaCard.append(el("p", { class: "muted" }, `${va.va_spots} value-addition spots · ${num(va.va_seconds, 0)} seconds of bonus airtime.`));
+    vaCard.append(el("p", {}, `${va.va_spots} value-addition spots, ${num(va.va_seconds, 0)} seconds of bonus airtime.`));
     box.append(vaCard);
 
     // Competitor view when a single lead advertiser is chosen
@@ -390,8 +416,12 @@ async function renderBasket() {
       r.lines.map((l) => [l.channel, l.programme, l.slot || "-", num(l.tvr, 2), money(l.reach), money(l.rate_30s_equivalent), num(l.cprp)])
     ));
     const t = r.totals;
-    box.append(el("p", { class: "section-title" },
-      `Basket: TVR ${num(t.total_tvr, 1)} · Reach ${money(t.total_reach)} · Cost ${money(t.total_cost)} · Blended CPRP ${num(t.blended_cprp)}`));
+    const strip = el("div", { class: "kpis", style: "margin:12px 0 0" });
+    strip.append(kpiTile("Total TVR", num(t.total_tvr, 1)));
+    strip.append(kpiTile("Total reach", money(t.total_reach)));
+    strip.append(kpiTile("Total cost", money(t.total_cost)));
+    strip.append(kpiTile("Blended CPRP", num(t.blended_cprp), null, true));
+    box.append(strip);
     $("#t2-export").hidden = false;
   } catch (e) { box.innerHTML = `<span class="status err">${e.message}</span>`; }
 }
@@ -442,23 +472,43 @@ function slotPill(slot) {
   return el("span", { class: "pill " + (slot === "PT" ? "pt" : "npt") }, slot === "PT" ? "Prime" : "Non-Prime");
 }
 function chartFragment(title, src) {
-  const f = document.createDocumentFragment();
-  if (title) f.append(el("div", { class: "section-title" }, title));
-  f.append(el("img", { class: "chart-img", src, loading: "lazy", alt: title }));
-  return f;
+  const wrap = el("div", { class: "chart-wrap" });
+  if (title) wrap.append(el("div", { class: "section-title" }, title));
+  wrap.append(el("img", { class: "chart-img", src, loading: "lazy", alt: title }));
+  return wrap;
 }
 function chartCard(title, src) {
   const card = el("div", { class: "card" });
   card.append(chartFragment(title, src));
   return card;
 }
+// Columns whose first-column values are names that get a colour swatch.
+const NAME_HEADERS = /^(advertiser|channel|programme|category)$/i;
+const MEDIUM_HEADER = /^medium$/i;
 function tableFragment(title, headers, rows) {
   const f = document.createDocumentFragment();
   if (title) f.append(el("div", { class: "section-title" }, title));
   const table = el("table");
-  const numCols = headers.map((h) => /spend|share|tvr|reach|rate|cprp|spots|cost/i.test(h));
-  table.append(el("tr", {}, ...headers.map((h, i) => el("th", { class: numCols[i] ? "num" : "" }, h))));
-  rows.forEach((r) => table.append(el("tr", {}, ...r.map((c, i) => el("td", { class: numCols[i] ? "num" : "" }, String(c))))));
+  const numCols = headers.map((h) => /spend|share|tvr|reach|rate|cprp|spots|cost|before|after|Δ|delta/i.test(h));
+  const swatchCol = headers.map((h) => NAME_HEADERS.test(h) || MEDIUM_HEADER.test(h));
+  const isMedium = headers.map((h) => MEDIUM_HEADER.test(h));
+  const thead = el("thead");
+  thead.append(el("tr", {}, ...headers.map((h, i) => el("th", { class: numCols[i] ? "num" : "" }, h))));
+  table.append(thead);
+  const tbody = el("tbody");
+  rows.forEach((r) => {
+    tbody.append(el("tr", {}, ...r.map((c, i) => {
+      const s = String(c);
+      let cls = numCols[i] ? "num" : "";
+      if (numCols[i] && /^\+/.test(s)) cls += " up";
+      else if (numCols[i] && /^-/.test(s) && /\d/.test(s)) cls += " down";
+      const td = el("td", { class: cls.trim() });
+      if (swatchCol[i] && c) td.append(swatch(s, isMedium[i]));
+      td.append(document.createTextNode(s));
+      return td;
+    })));
+  });
+  table.append(tbody);
   f.append(table);
   return f;
 }
@@ -567,8 +617,8 @@ function renderRateCardReview(jobId, review) {
     box.append(card);
   });
 
-  const save = el("button", { class: "btn primary", onclick: saveRateCards }, "Confirm & Save all channels");
-  box.append(el("div", { class: "card" }, save));
+  const save = el("button", { class: "btn primary", onclick: saveRateCards }, "Confirm and save all channels");
+  box.append(el("div", { class: "card" }, el("div", { class: "cbody" }, save)));
 }
 
 function applyDuration(bi, secs) {
@@ -621,22 +671,24 @@ function renderGenericReview(kind, jobId, review, boxSel, reload) {
   const s = review.summary;
   box.innerHTML = "";
   const card = el("div", { class: "card" });
-  card.append(el("div", { class: "section-title" }, "Review"));
-  const facts = el("ul");
+  card.append(el("div", { class: "section-title" }, "Review before saving"));
+  const body = el("div", { class: "cbody" });
+  const facts = el("ul", { style: "margin:0 0 12px;padding-left:18px;font-size:13px;color:var(--ink-2)" });
   facts.append(el("li", {}, `Rows parsed: ${s.row_count}`));
   if (kind === "adex") {
-    facts.append(el("li", {}, `Paid (Com) rows: ${s.com_rows} · Com spend: ${money(s.com_spend_total)}`));
+    facts.append(el("li", {}, `Paid (Com) rows: ${s.com_rows}, Com spend: ${money(s.com_spend_total)}`));
     facts.append(el("li", {}, `V/A (bonus) rows excluded from spend: ${s.va_rows}`));
   }
-  card.append(facts);
+  body.append(facts);
   if (s.header_mismatch) {
-    card.append(el("p", { class: "pill warn" }, "Header mismatch: " + (s.missing_required || []).join(", ")));
-    card.append(el("p", { class: "muted" }, "Missing required columns - confirm the sheet is correct before saving."));
+    body.append(el("p", { class: "pill warn", style: "display:inline-block;margin-bottom:8px" }, "Header mismatch: " + (s.missing_required || []).join(", ")));
+    body.append(el("p", { class: "muted", style: "margin:0 0 12px" }, "Missing required columns. Confirm the sheet is correct before saving."));
   }
-  card.append(el("button", { class: "btn primary", onclick: async () => {
+  body.append(el("button", { class: "btn primary", onclick: async () => {
     try { const r = await confirmJob(jobId, {}); toast(`Saved ${r.rows} rows`); box.innerHTML = ""; reload(); }
     catch (e) { toast(e.message, true); }
-  } }, "Confirm & Save"));
+  } }, "Confirm and save"));
+  card.append(body);
   box.append(card);
 }
 
@@ -661,7 +713,7 @@ function batchRow(b, detail, onDelete) {
   const row = el("div", { class: "ask-row", style: "justify-content:space-between;border-bottom:1px solid var(--line);padding:8px 0" });
   const left = el("div");
   left.append(el("div", {}, b.filename));
-  left.append(el("div", { class: "muted" }, `${detail} · ${(b.uploaded_at || "").slice(0, 16).replace("T", " ")}`));
+  left.append(el("div", { class: "muted" }, `${detail}, ${(b.uploaded_at || "").slice(0, 16).replace("T", " ")}`));
   row.append(left, el("button", { class: "btn small danger", onclick: onDelete }, "Delete"));
   return row;
 }
@@ -716,5 +768,5 @@ async function initSettings() {
   $("#template-upload").addEventListener("click", () => uploadGuide("template", "#template-file"));
 }
 
-// Init default tab
-onTabShow("market");
+// Load stable colour maps, then init default tab.
+loadColorMaps().finally(() => onTabShow("market"));

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..models import AdexRow, Batch, TvrRow
 from ..utils.timeparse import in_window, parse_time
-from . import settings_store
+from . import colors, settings_store
 
 
 def _date(value) -> dt.date | None:
@@ -57,6 +57,7 @@ def commit_adex(db: Session, filename: str, payload: dict) -> dict:
     if payload.get("headers_seen"):
         settings_store.put(db, settings_store.ADEX_MAPPING_KEY, ",".join(payload["headers_seen"]))
     db.commit()
+    colors.clear_cache()
     return {"batch_id": batch_id, "rows": len(rows)}
 
 
@@ -91,6 +92,7 @@ def commit_tvr(db: Session, filename: str, payload: dict) -> dict:
         )
     db.add(Batch(id=batch_id, kind="tvr", filename=filename, row_count=len(rows)))
     db.commit()
+    colors.clear_cache()
     return {"batch_id": batch_id, "rows": len(rows)}
 
 
@@ -127,6 +129,7 @@ def delete_batch(db: Session, kind: str, batch_id: str) -> int:
     n = db.execute(delete(model).where(model.batch_id == batch_id)).rowcount
     db.execute(delete(Batch).where(Batch.id == batch_id))
     db.commit()
+    colors.clear_cache()
     return n or 0
 
 

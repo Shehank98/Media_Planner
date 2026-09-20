@@ -6,7 +6,7 @@
   <title>Media Analysis System</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
@@ -66,7 +66,7 @@
           </div>
           <div class="field field-actions">
             <button class="btn primary" id="t1-run">Run Analysis</button>
-            <button class="btn" id="t1-report">Report ▾</button>
+            <button class="btn" id="t1-report">Report</button>
             <div class="menu" id="t1-report-menu" hidden>
               <button data-fmt="preview">Preview in browser</button>
               <button data-fmt="pdf">Download PDF</button>
@@ -118,9 +118,11 @@
         <div id="t2-results" class="results"></div>
         <div class="card" id="t2-basket-card" hidden>
           <h3>Basket builder</h3>
-          <p class="muted">Selected programmes - combined TVR, reach, cost and blended CPRP.</p>
-          <div id="t2-basket"></div>
-          <button class="btn" id="t2-export" hidden>Export CSV</button>
+          <div class="cbody">
+            <p>Selected programmes, with combined TVR, reach, cost and blended CPRP.</p>
+            <div id="t2-basket"></div>
+            <button class="btn" id="t2-export" hidden>Export CSV</button>
+          </div>
         </div>
       </section>
 
@@ -150,14 +152,16 @@
         </header>
         <div class="card">
           <h3>Upload rate card workbook</h3>
-          <input type="file" id="rc-file" accept=".xlsx,.xls" />
-          <button class="btn primary" id="rc-upload">Upload &amp; Parse</button>
-          <div id="rc-status" class="status"></div>
+          <div class="cbody">
+            <input type="file" id="rc-file" accept=".xlsx,.xls" />
+            <button class="btn primary" id="rc-upload">Upload and parse</button>
+            <div id="rc-status" class="status"></div>
+          </div>
         </div>
         <div id="rc-review"></div>
         <div class="card">
           <h3>Stored rate card batches</h3>
-          <div id="rc-batches"></div>
+          <div class="cbody"><div id="rc-batches"></div></div>
         </div>
       </section>
 
@@ -170,23 +174,27 @@
         <div class="grid-2">
           <div class="card">
             <h3>Adex / Media Watch data <span class="tag">Tab 1 &amp; 3</span></h3>
-            <p class="muted">Advertising-spend export (Product_Group, Advertiser, Cost…). "Adex" and "media watch" mean this dataset.</p>
-            <input type="file" id="adex-file" accept=".xlsx,.xls" />
-            <button class="btn primary" id="adex-upload">Upload &amp; Parse</button>
-            <div id="adex-status" class="status"></div>
-            <div id="adex-review"></div>
-            <h4>Batches</h4>
-            <div id="adex-batches"></div>
+            <div class="cbody">
+              <p>Advertising-spend export (Product_Group, Advertiser, Cost, and so on). "Adex" and "media watch" both mean this dataset.</p>
+              <input type="file" id="adex-file" accept=".xlsx,.xls" />
+              <button class="btn primary" id="adex-upload">Upload and parse</button>
+              <div id="adex-status" class="status"></div>
+              <div id="adex-review"></div>
+              <h4>Batches</h4>
+              <div id="adex-batches"></div>
+            </div>
           </div>
           <div class="card">
             <h3>TVR data <span class="tag">Tab 2</span></h3>
-            <p class="muted">Television ratings export (Rank, Channel, Program, TVR, Reach…). A separate dataset - uploaded on its own.</p>
-            <input type="file" id="mw-file" accept=".xlsx,.xls" />
-            <button class="btn primary" id="mw-upload">Upload &amp; Parse</button>
-            <div id="mw-status" class="status"></div>
-            <div id="mw-review"></div>
-            <h4>Batches</h4>
-            <div id="mw-batches"></div>
+            <div class="cbody">
+              <p>Television ratings export (Rank, Channel, Program, TVR, Reach, and so on). A separate dataset, uploaded on its own.</p>
+              <input type="file" id="mw-file" accept=".xlsx,.xls" />
+              <button class="btn primary" id="mw-upload">Upload and parse</button>
+              <div id="mw-status" class="status"></div>
+              <div id="mw-review"></div>
+              <h4>Batches</h4>
+              <div id="mw-batches"></div>
+            </div>
           </div>
         </div>
       </section>
@@ -198,30 +206,36 @@
         </header>
         <div class="card">
           <h3>Prime-time window</h3>
-          <p class="muted">Applied consistently across every channel to infer PT/NPT where the sheet doesn't state it.</p>
-          <div class="ask-row">
-            <input type="time" id="prime-start" /> <span>to</span> <input type="time" id="prime-end" />
-            <button class="btn primary" id="prime-save">Save</button>
+          <div class="cbody">
+            <p>Applied consistently across every channel to infer PT/NPT where the sheet doesn't state it.</p>
+            <div class="ask-row" style="padding:0">
+              <input type="time" id="prime-start" /> <span>to</span> <input type="time" id="prime-end" />
+              <button class="btn primary" id="prime-save">Save window</button>
+            </div>
           </div>
         </div>
         <div class="grid-2">
           <div class="card">
             <h3>Analysis rules <span class="tag">business logic</span></h3>
-            <p class="muted">Injected <strong>before</strong> any interpretation - the Com/V-A rule, CPRP formula, category conventions, definitions.</p>
-            <input type="file" id="analysis-file" accept=".txt,.md" />
-            <button class="btn" id="analysis-upload">Upload file</button>
-            <textarea id="analysis-text" rows="10" placeholder="e.g. Spend excludes V/A rows. CPRP = 30s rate / TVR. Banking category includes…"></textarea>
-            <button class="btn primary" id="analysis-save">Save analysis rules</button>
-            <div id="analysis-status" class="status"></div>
+            <div class="cbody">
+              <p>Injected before any interpretation: the Com/V-A rule, CPRP formula, category conventions, definitions.</p>
+              <input type="file" id="analysis-file" accept=".txt,.md" />
+              <button class="btn" id="analysis-upload">Upload file</button>
+              <textarea id="analysis-text" rows="10" placeholder="e.g. Spend excludes V/A rows. CPRP = 30s rate / TVR. Banking category includes..."></textarea>
+              <button class="btn primary" id="analysis-save">Save analysis rules</button>
+              <div id="analysis-status" class="status" style="padding:8px 0 0"></div>
+            </div>
           </div>
           <div class="card">
             <h3>Report template guide <span class="tag">tone &amp; format</span></h3>
-            <p class="muted">Injected <strong>before</strong> writing answers/reports - house tone, structure, section order, phrasing.</p>
-            <input type="file" id="template-file" accept=".txt,.md" />
-            <button class="btn" id="template-upload">Upload file</button>
-            <textarea id="template-text" rows="10" placeholder="e.g. Lead with the headline insight. Use short paragraphs. Structure: Context → Category → Competitors → Recommendation…"></textarea>
-            <button class="btn primary" id="template-save">Save template guide</button>
-            <div id="template-status" class="status"></div>
+            <div class="cbody">
+              <p>Injected before writing answers or reports: house tone, structure, section order, phrasing.</p>
+              <input type="file" id="template-file" accept=".txt,.md" />
+              <button class="btn" id="template-upload">Upload file</button>
+              <textarea id="template-text" rows="10" placeholder="e.g. Lead with the headline insight. Use short paragraphs. Structure: Context, Category, Competitors, Recommendation."></textarea>
+              <button class="btn primary" id="template-save">Save template guide</button>
+              <div id="template-status" class="status" style="padding:8px 0 0"></div>
+            </div>
           </div>
         </div>
       </section>

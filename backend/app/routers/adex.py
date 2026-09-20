@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from .. import charts
 from ..database import get_db
 from ..llm import gemini, prompt_guide
-from ..services import adex_analysis, ingest, report
+from ..services import adex_analysis, colors as colors_svc, ingest, report
 
 router = APIRouter(prefix="/api/tab1", tags=["tab1-category"])
 
@@ -88,28 +88,32 @@ def value_addition(
 @router.get("/charts/medium-split.png")
 def chart_medium(product_groups: list[str] | None = Query(None), advertisers: list[str] | None = Query(None), db: Session = Depends(get_db)):
     data = adex_analysis.medium_split(db, product_groups, advertisers)
-    png = charts.bar_chart([d["medium"] for d in data], [d["spend"] for d in data], title="Spend by Medium", money=True)
+    png = charts.bar_chart([d["medium"] for d in data], [d["spend"] for d in data], title="", money=True, color_kind="medium")
     return Response(png, media_type="image/png")
 
 
 @router.get("/charts/trend.png")
 def chart_trend(product_groups: list[str] | None = Query(None), advertisers: list[str] | None = Query(None), by: str = "month", db: Session = Depends(get_db)):
     data = adex_analysis.spend_trend(db, product_groups, advertisers, by)
-    png = charts.line_chart(data["labels"], data["series"], title="Spend Trend", money=True)
+    png = charts.line_chart(data["labels"], data["series"], title="", money=True)
     return Response(png, media_type="image/png")
 
 
 @router.get("/charts/sos.png")
 def chart_sos(product_groups: list[str] | None = Query(None), medium: str | None = None, db: Session = Depends(get_db)):
     data = adex_analysis.share_of_spend(db, product_groups, medium, limit=5)
-    png = charts.pie_chart([d["advertiser"] for d in data], [d["share_pct"] for d in data], title=f"Top 5 SOS{' - ' + medium if medium else ''}")
+    names = [d["advertiser"] for d in data]
+    png = charts.pie_chart(names, [d["share_pct"] for d in data], title="",
+                           colors=colors_svc.color_list(colors_svc.advertiser_colors(db), names))
     return Response(png, media_type="image/png")
 
 
 @router.get("/charts/top-advertisers.png")
 def chart_top_adv(product_groups: list[str] | None = Query(None), db: Session = Depends(get_db)):
     data = adex_analysis.top_advertisers(db, product_groups, limit=10)
-    png = charts.bar_chart([d["advertiser"] for d in data], [d["spend"] for d in data], title="Top Advertisers by Spend", money=True)
+    names = [d["advertiser"] for d in data]
+    png = charts.bar_chart(names, [d["spend"] for d in data], title="", money=True,
+                           colors=colors_svc.color_list(colors_svc.advertiser_colors(db), names))
     return Response(png, media_type="image/png")
 
 
