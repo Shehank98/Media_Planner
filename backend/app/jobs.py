@@ -20,8 +20,8 @@ from .config import settings
 from .database import SessionLocal
 from .models import Job
 from .parsers import adex as adex_parser
-from .parsers import media_watch as mw_parser
 from .parsers import rate_card as rc_parser
+from .parsers import tvr as tvr_parser
 
 
 def _dir(name: str) -> str:
@@ -71,7 +71,7 @@ def _set_status(job_id: str, status: str, error: str | None = None) -> None:
 _PARSERS = {
     "rate_card": rc_parser.parse_workbook,
     "adex": adex_parser.parse_workbook,
-    "media_watch": mw_parser.parse_workbook,
+    "tvr": tvr_parser.parse_workbook,
 }
 
 
@@ -100,7 +100,7 @@ def _summary(kind: str, payload) -> dict:
                 "headers_seen",
             )
         }
-    if kind == "media_watch":
+    if kind == "tvr":
         return {
             k: payload[k]
             for k in ("sheet_name", "row_count", "header_mismatch", "missing_required", "headers_seen")

@@ -126,7 +126,7 @@ def parse_row_date(dd, mn, yr) -> dt.date | None:
 
 
 def parse_any_date(value) -> dt.date | None:
-    """Best-effort single-cell date parse (used for media-watch Date column)."""
+    """Best-effort single-cell date parse (used for the TVR sheet Date column)."""
     if value is None or value == "":
         return None
     if isinstance(value, dt.datetime):

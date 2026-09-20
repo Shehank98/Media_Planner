@@ -28,7 +28,7 @@ _FORBIDDEN = re.compile(
 )
 
 # Only these tables are exposed to the ad-hoc feature.
-_ALLOWED_TABLES = {"adex_rows", "media_watch_rows", "rate_cards", "batches"}
+_ALLOWED_TABLES = {"adex_rows", "tvr_rows", "rate_cards", "batches"}
 
 
 class UnsafeQuery(ValueError):

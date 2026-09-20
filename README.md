@@ -41,7 +41,12 @@ spend trend, top advertisers, Top-5 Share of Spend (per medium), competitor view
 and V/A bonus metric. Exports a pitch report (**PDF or Word**) with embedded
 charts and a Gemini narrative. Inline "ask a question" narrates the current pivot.
 
-### Tab 2 — Channel Basket & Programme Selection (media-watch / TVR data)
+### Tab 2 — Channel Basket & Programme Selection (TVR data)
+
+> Terminology: **adex** and **media watch** both mean the advertising-spend
+> dataset (Tab 1 / Tab 3). **TVR data** is a *separate* ratings dataset used
+> here in Tab 2. They are uploaded independently.
+
 Ranks programmes by TVR / TVR share % / reach % within prime/non-prime buckets,
 and computes **CPRP = rate_30s_equivalent ÷ TVR** by joining to the rate card
 store (matched by channel + programme, falling back to channel + slot, using the
@@ -157,7 +162,7 @@ Use `--dry-run` to preview the plan without writing.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/api/uploads/{rate_card\|adex\|media_watch}` | async upload |
+| POST | `/api/uploads/{rate_card\|adex\|tvr}` | async upload |
 | GET  | `/api/jobs/{id}` · `/review` | poll / review |
 | POST | `/api/jobs/{id}/confirm` | commit reviewed data |
 | GET  | `/api/tab1/*` | category analysis + charts |
@@ -181,7 +186,7 @@ backend/app/
   models.py          SQLAlchemy tables (all carry batch_id + uploaded_at)
   jobs.py            async upload orchestration (stage → review → confirm)
   charts.py          server-side matplotlib charts (shared by app + reports)
-  parsers/           rate_card / adex / media_watch (per-sheet header reading)
+  parsers/           rate_card / adex / tvr (per-sheet header reading)
   services/          rate_cards, adex_analysis (Tab1/3), basket (Tab2),
                      ingest, report (PDF/Word), restricted_sql, settings_store
   llm/               gemini client + prompt_guide store

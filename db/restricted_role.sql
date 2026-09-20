@@ -16,7 +16,7 @@ REVOKE ALL ON SCHEMA public FROM media_readonly;
 GRANT USAGE ON SCHEMA public TO media_readonly;
 
 -- SELECT only, on the data tables the feature is allowed to see.
-GRANT SELECT ON adex_rows, media_watch_rows, rate_cards, batches TO media_readonly;
+GRANT SELECT ON adex_rows, tvr_rows, rate_cards, batches TO media_readonly;
 
 -- Ensure future tables are NOT auto-granted (explicit grants only).
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM media_readonly;

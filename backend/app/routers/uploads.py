@@ -22,7 +22,7 @@ from ..services import ingest, rate_cards
 
 router = APIRouter(tags=["uploads"])
 
-_KINDS = {"rate_card", "adex", "media_watch"}
+_KINDS = {"rate_card", "adex", "tvr"}
 
 
 @router.post("/api/uploads/{kind}")
@@ -79,7 +79,7 @@ def job_review(job_id: str, db: Session = Depends(get_db)):
 def job_confirm(job_id: str, body: dict | None = None, db: Session = Depends(get_db)):
     """Commit reviewed data. Body may contain corrected data:
       rate_card: {blocks: [...]}     (overrides staged blocks)
-      adex/media_watch: {payload: {...}} (optional overrides)
+      adex/tvr: {payload: {...}} (optional overrides)
     """
     job = db.get(Job, job_id)
     if not job:
@@ -101,9 +101,9 @@ def job_confirm(job_id: str, body: dict | None = None, db: Session = Depends(get
     elif kind == "adex":
         payload = body.get("payload") or staged["payload"]
         result = ingest.commit_adex(db, filename, payload)
-    elif kind == "media_watch":
+    elif kind == "tvr":
         payload = body.get("payload") or staged["payload"]
-        result = ingest.commit_media_watch(db, filename, payload)
+        result = ingest.commit_tvr(db, filename, payload)
     else:
         raise HTTPException(400, f"unknown kind {kind}")
 

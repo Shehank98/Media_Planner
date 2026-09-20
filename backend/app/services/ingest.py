@@ -1,4 +1,4 @@
-"""Commit reviewed adex / media-watch staged payloads into the main tables."""
+"""Commit reviewed adex / TVR staged payloads into the main tables."""
 from __future__ import annotations
 
 import datetime as dt
@@ -7,7 +7,7 @@ import uuid
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from ..models import AdexRow, Batch, MediaWatchRow
+from ..models import AdexRow, Batch, TvrRow
 from ..utils.timeparse import in_window, parse_time
 from . import settings_store
 
@@ -60,7 +60,7 @@ def commit_adex(db: Session, filename: str, payload: dict) -> dict:
     return {"batch_id": batch_id, "rows": len(rows)}
 
 
-def commit_media_watch(db: Session, filename: str, payload: dict) -> dict:
+def commit_tvr(db: Session, filename: str, payload: dict) -> dict:
     prime_start, prime_end = settings_store.get_prime_window(db)
     batch_id = str(uuid.uuid4())
     rows = payload.get("rows", [])
@@ -68,7 +68,7 @@ def commit_media_watch(db: Session, filename: str, payload: dict) -> dict:
         start_t = parse_time(r.get("start_time"))
         pnp = "PT" if in_window(start_t, prime_start, prime_end) else ("NPT" if start_t else None)
         db.add(
-            MediaWatchRow(
+            TvrRow(
                 batch_id=batch_id,
                 rank=r.get("rank"),
                 data_set=r.get("data_set"),
@@ -89,7 +89,7 @@ def commit_media_watch(db: Session, filename: str, payload: dict) -> dict:
                 prime_non_prime=pnp,
             )
         )
-    db.add(Batch(id=batch_id, kind="media_watch", filename=filename, row_count=len(rows)))
+    db.add(Batch(id=batch_id, kind="tvr", filename=filename, row_count=len(rows)))
     db.commit()
     return {"batch_id": batch_id, "rows": len(rows)}
 
@@ -123,7 +123,7 @@ def list_batches(db: Session, kind: str) -> list[dict]:
 
 
 def delete_batch(db: Session, kind: str, batch_id: str) -> int:
-    model = AdexRow if kind == "adex" else MediaWatchRow
+    model = AdexRow if kind == "adex" else TvrRow
     n = db.execute(delete(model).where(model.batch_id == batch_id)).rowcount
     db.execute(delete(Batch).where(Batch.id == batch_id))
     db.commit()

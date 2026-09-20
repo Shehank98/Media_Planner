@@ -1,6 +1,6 @@
 """Normalise mixed time formats into a single datetime.time.
 
-Rate cards / media-watch sheets mix real time objects (`18:55:00`) with strings
+Rate cards / TVR sheets mix real time objects (`18:55:00`) with strings
 like `"01:30 pm"`, `"1830"`, `"6:00 PM"`.
 """
 from __future__ import annotations

@@ -1,4 +1,6 @@
-"""Media-watch (TVR) workbook parser - Tab 2 dataset.
+"""TVR (television ratings) workbook parser - Tab 2 dataset.
+
+This is a separate dataset from the adex / media-watch spend data.
 
 Expected columns:
   Rank, Data Set, Channel, Date, Day, Start, End, Program, Duration,

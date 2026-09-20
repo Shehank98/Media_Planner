@@ -158,7 +158,8 @@
         </header>
         <div class="grid-2">
           <div class="card">
-            <h3>Adex data (Tab 1 / Tab 3)</h3>
+            <h3>Adex / Media Watch data (Tab 1 &amp; Tab 3)</h3>
+            <p class="muted">Advertising-spend export (Product_Group, Advertiser, Cost, …). "Adex" and "media watch" mean this dataset.</p>
             <input type="file" id="adex-file" accept=".xlsx,.xls" />
             <button class="btn primary" id="adex-upload">Upload &amp; Parse</button>
             <div id="adex-status" class="status"></div>
@@ -167,7 +168,8 @@
             <div id="adex-batches"></div>
           </div>
           <div class="card">
-            <h3>Media-watch / TVR data (Tab 2)</h3>
+            <h3>TVR data (Tab 2)</h3>
+            <p class="muted">Television ratings export (Rank, Channel, Program, TVR, Reach, …). A separate dataset from adex — uploaded on its own.</p>
             <input type="file" id="mw-file" accept=".xlsx,.xls" />
             <button class="btn primary" id="mw-upload">Upload &amp; Parse</button>
             <div id="mw-status" class="status"></div>

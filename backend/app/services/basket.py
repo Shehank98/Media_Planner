@@ -1,22 +1,22 @@
 """Tab 2: channel basket & programme selection.
 
-CPRP = rate_30s_equivalent / TVR   (TVR from the media-watch upload, NOT the
-rate card's own reference Rating column). The raw rate + duration are always
-returned alongside so the normalisation basis is visible, never hidden.
+CPRP = rate_30s_equivalent / TVR   (TVR from the TVR-data upload, NOT the rate
+card's own reference Rating column). The raw rate + duration are always returned
+alongside so the normalisation basis is visible, never hidden.
 """
 from __future__ import annotations
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
-from ..models import MediaWatchRow
+from ..models import TvrRow
 from . import rate_cards, settings_store
 
-RANK_METRICS = {"tvr": MediaWatchRow.tvr, "tvr_share_pct": MediaWatchRow.tvr_share_pct, "reach_pct": MediaWatchRow.reach_pct}
+RANK_METRICS = {"tvr": TvrRow.tvr, "tvr_share_pct": TvrRow.tvr_share_pct, "reach_pct": TvrRow.reach_pct}
 
 
 def channels(db: Session) -> list[str]:
-    rows = db.execute(select(MediaWatchRow.channel).where(MediaWatchRow.channel.isnot(None)).distinct()).scalars().all()
+    rows = db.execute(select(TvrRow.channel).where(TvrRow.channel.isnot(None)).distinct()).scalars().all()
     return sorted(r for r in rows if r)
 
 
@@ -29,27 +29,27 @@ def best_programmes(
 ) -> list[dict]:
     """Rank programmes by the chosen metric, averaging the metric across the
     dates each programme aired, and attach CPRP from the rate card store."""
-    order_col = RANK_METRICS.get(metric, MediaWatchRow.tvr)
+    order_col = RANK_METRICS.get(metric, TvrRow.tvr)
     conds = []
     if channel:
-        conds.append(MediaWatchRow.channel == channel)
+        conds.append(TvrRow.channel == channel)
     if slot:
-        conds.append(MediaWatchRow.prime_non_prime == slot)
+        conds.append(TvrRow.prime_non_prime == slot)
 
     stmt = (
         select(
-            MediaWatchRow.channel,
-            MediaWatchRow.program,
-            MediaWatchRow.prime_non_prime,
-            func.avg(MediaWatchRow.tvr),
-            func.avg(MediaWatchRow.tvr_share_pct),
-            func.avg(MediaWatchRow.reach),
-            func.avg(MediaWatchRow.reach_pct),
-            func.max(MediaWatchRow.spot_date),
+            TvrRow.channel,
+            TvrRow.program,
+            TvrRow.prime_non_prime,
+            func.avg(TvrRow.tvr),
+            func.avg(TvrRow.tvr_share_pct),
+            func.avg(TvrRow.reach),
+            func.avg(TvrRow.reach_pct),
+            func.max(TvrRow.spot_date),
             func.count(),
         )
         .where(and_(*conds) if conds else True)
-        .group_by(MediaWatchRow.channel, MediaWatchRow.program, MediaWatchRow.prime_non_prime)
+        .group_by(TvrRow.channel, TvrRow.program, TvrRow.prime_non_prime)
         .order_by(func.avg(order_col).desc().nullslast())
         .limit(limit)
     )
@@ -98,14 +98,14 @@ def build_basket(db: Session, selections: list[dict]) -> dict:
         prog = sel.get("programme")
         row = db.execute(
             select(
-                func.avg(MediaWatchRow.tvr),
-                func.avg(MediaWatchRow.reach),
-                func.avg(MediaWatchRow.reach_pct),
-                MediaWatchRow.prime_non_prime,
-                func.max(MediaWatchRow.spot_date),
+                func.avg(TvrRow.tvr),
+                func.avg(TvrRow.reach),
+                func.avg(TvrRow.reach_pct),
+                TvrRow.prime_non_prime,
+                func.max(TvrRow.spot_date),
             )
-            .where(and_(MediaWatchRow.channel == ch, MediaWatchRow.program == prog))
-            .group_by(MediaWatchRow.prime_non_prime)
+            .where(and_(TvrRow.channel == ch, TvrRow.program == prog))
+            .group_by(TvrRow.prime_non_prime)
         ).first()
         if not row:
             continue

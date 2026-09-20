@@ -499,13 +499,13 @@ async function deleteRateCardBatch(id) {
 }
 
 // ---------------------------------------------------------------------------
-// DATA & UPLOADS (adex + media watch)
+// DATA & UPLOADS (adex/media-watch spend + TVR ratings - two separate datasets)
 // ---------------------------------------------------------------------------
 function initData() {
   $("#adex-upload").addEventListener("click", () =>
     uploadAndPoll("adex", "#adex-file", "#adex-status", (id, r) => renderGenericReview("adex", id, r, "#adex-review", loadAdexBatches)));
   $("#mw-upload").addEventListener("click", () =>
-    uploadAndPoll("media_watch", "#mw-file", "#mw-status", (id, r) => renderGenericReview("media_watch", id, r, "#mw-review", loadMwBatches)));
+    uploadAndPoll("tvr", "#mw-file", "#mw-status", (id, r) => renderGenericReview("tvr", id, r, "#mw-review", loadMwBatches)));
   loadAdexBatches(); loadMwBatches();
 }
 
@@ -534,7 +534,7 @@ function renderGenericReview(kind, jobId, review, boxSel, reload) {
 }
 
 async function loadAdexBatches() { await loadBatches("/api/tab1/batches", "#adex-batches", "adex"); }
-async function loadMwBatches() { await loadBatches("/api/tab2/batches", "#mw-batches", "media_watch"); }
+async function loadMwBatches() { await loadBatches("/api/tab2/batches", "#mw-batches", "tvr"); }
 
 async function loadBatches(url, boxSel, kind) {
   const box = $(boxSel);

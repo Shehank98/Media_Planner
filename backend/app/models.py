@@ -30,7 +30,7 @@ class Batch(Base):
     __tablename__ = "batches"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    kind: Mapped[str] = mapped_column(String(32), index=True)  # rate_card|adex|media_watch
+    kind: Mapped[str] = mapped_column(String(32), index=True)  # rate_card|adex|tvr
     filename: Mapped[str] = mapped_column(String(512))
     uploaded_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     row_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -93,10 +93,11 @@ class AdexRow(Base):
     uploaded_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class MediaWatchRow(Base):
-    """TVR / media-watch rows (Tab 2 dataset)."""
+class TvrRow(Base):
+    """TVR (television ratings) rows - Tab 2 dataset. A separate dataset from
+    the adex / media-watch spend data (AdexRow)."""
 
-    __tablename__ = "media_watch_rows"
+    __tablename__ = "tvr_rows"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     batch_id: Mapped[str] = mapped_column(String(36), index=True)

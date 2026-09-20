@@ -68,12 +68,12 @@ def export_basket(body: dict = Body(...), db: Session = Depends(get_db)):
 
 @router.get("/batches")
 def batches(db: Session = Depends(get_db)):
-    return ingest.list_batches(db, "media_watch")
+    return ingest.list_batches(db, "tvr")
 
 
 @router.delete("/batches/{batch_id}")
 def delete_batch(batch_id: str, db: Session = Depends(get_db)):
-    n = ingest.delete_batch(db, "media_watch", batch_id)
+    n = ingest.delete_batch(db, "tvr", batch_id)
     if n == 0:
         raise HTTPException(404, "batch not found")
     return {"deleted_rows": n}

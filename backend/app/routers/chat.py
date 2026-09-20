@@ -22,7 +22,7 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 _SCHEMA_HINT = (
     "adex_rows(product_group, advertiser, product, advt_theme, va_com, medium, "
     "channel, program, spot_date, cost, dur). Spend = SUM(cost) WHERE va_com='Com'.\n"
-    "media_watch_rows(channel, program, spot_date, tvr, tvr_share_pct, reach, reach_pct, prime_non_prime).\n"
+    "tvr_rows(channel, program, spot_date, tvr, tvr_share_pct, reach, reach_pct, prime_non_prime).\n"
     "rate_cards(channel, programme, effective_date, rate_30s_equivalent, prime_non_prime)."
 )
 
