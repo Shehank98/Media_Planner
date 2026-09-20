@@ -1,55 +1,67 @@
-"""Shared visual token system for the whole app.
+"""Shared visual token system (dark "intelligence terminal" theme).
 
-The key requirement for a pitch tool: the SAME advertiser or channel gets the
-SAME colour in every chart and every table swatch, across all views. We achieve
-that with a deterministic name -> colour hash (FNV-1a), mirrored byte-for-byte
-in the frontend (frontend/app.js `colorFor`) so server charts and client chips
-match exactly. No shared state or coordination needed.
-
-Palette is a curated, well-separated qualitative set on a light "paper" base;
-the interactive accent (petrol teal) is deliberately kept OUT of the categorical
-set so an advertiser is never coloured like a button.
+The same advertiser/channel keeps the same colour in every chart and every
+table swatch (see services/colors.py for the stable name->colour assignment).
+Colours are tuned to read on the dark app background; the printed report renders
+charts on a light background via the `dark=False` path in charts.py.
 """
 from __future__ import annotations
 
 # Interactive accent (UI only: buttons, active nav, links, focus, selection).
-ACCENT = "#0F6E63"
+ACCENT = "#2DD4BF"
+ACCENT_INK = "#04211E"      # text on an accent-filled button
 
 # Neutral base tokens (kept in sync with styles.css :root).
-INK = "#1A1D21"
-MUTED = "#6A6E73"
-LINE = "#E2E4E1"
-PAPER = "#F4F5F3"
+INK = "#EAEFF5"
+MUTED = "#78838F"
+LINE = "#242C38"
+PAPER = "#0B0E13"
+PANEL = "#141922"
 
-# Categorical palette for advertisers / channels (avoids the accent teal).
+# Categorical palette for advertisers / channels (bright enough for dark bg,
+# still legible on the light report). Avoids the accent teal.
 CATEGORICAL = [
-    "#3F6DA6",  # slate blue
-    "#B4523C",  # rust
-    "#C08A2E",  # ochre
-    "#5B8C5A",  # sage
-    "#6B5B95",  # plum
-    "#B23B6E",  # rose
-    "#4B7B8C",  # steel
-    "#8A6D3B",  # bronze
-    "#A0553B",  # clay
+    "#6AA0F0",  # blue
+    "#F07A52",  # coral
+    "#E6B23E",  # amber
+    "#63C08C",  # green
+    "#B98AE0",  # violet
+    "#E86FA6",  # pink
+    "#4FC4D6",  # cyan
+    "#C9A24B",  # gold
+    "#9A8CF0",  # periwinkle
 ]
-OTHERS = "#8A8D91"  # grey, reserved for an "Others" bucket
+OTHERS = "#8A95A2"  # grey, reserved for an "Others" bucket
 
 # Fixed medium colours (TV / Radio / Press) - stable everywhere.
 MEDIUM_COLORS = {
-    "TV": "#1C5D7C",
-    "Radio": "#B8823A",
-    "Press": "#6C7A45",
+    "TV": "#4DA3D9",
+    "Radio": "#E6B23E",
+    "Press": "#7FB069",
     "Unknown": OTHERS,
 }
 
 # Semantic colours (used app-wide).
-GAIN = "#2F7D4F"
-DECLINE = "#C0392B"
-VA = "#6B5B95"  # value-addition / bonus (excluded from spend)
+GAIN = "#45C285"
+DECLINE = "#FF6B5E"
+VA = "#A98BEA"  # value-addition / bonus (excluded from spend)
 
-# Sequential ramp name for heatmaps.
+# Sequential ramp name for heatmaps (light report path).
 SEQUENTIAL_CMAP = "BuPu"
+
+# Per-theme chart chrome colours.
+THEME = {
+    "dark": {
+        "fig": "#141922", "text": "#C7D0D9", "title": "#EAEFF5",
+        "grid": "#212A35", "muted": "#78838F", "axis": "#2A3441",
+        "value": "#8A95A2",
+    },
+    "light": {
+        "fig": "#FFFFFF", "text": "#3B3F44", "title": "#1A1D21",
+        "grid": "#ECEDEA", "muted": "#6A6E73", "axis": "#D7DBDE",
+        "value": "#6A6E73",
+    },
+}
 
 
 def color_for(name: str | None) -> str:

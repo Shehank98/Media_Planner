@@ -76,51 +76,62 @@ def build_charts(data: dict) -> dict[str, bytes]:
     out: dict[str, bytes] = {}
     amap = data.get("_amap", {})
     cmap = data.get("_cmap", {})
+
+    # The printed report renders charts on a light background.
+    def _light(fn):
+        def wrapped(*a, **k):
+            k.setdefault("dark", False)
+            return fn(*a, **k)
+        return wrapped
+    line_chart = _light(charts.line_chart)
+    pie_chart = _light(charts.pie_chart)
+    bar_chart = _light(charts.bar_chart)
+
     def acols(names):
         return [amap.get(n, palette.OTHERS) for n in names]
     def ccols(names):
         return [cmap.get(n, palette.OTHERS) for n in names]
     tr = data["trend"]
     if tr["labels"]:
-        out["trend"] = charts.line_chart(tr["labels"], tr["series"], title="Total category spend by month", money=True)
+        out["trend"] = line_chart(tr["labels"], tr["series"], title="Total category spend by month", money=True)
     ms = data["medium_split"]
     if ms:
-        out["medium"] = charts.pie_chart([m["medium"] for m in ms], [m["spend"] for m in ms],
+        out["medium"] = pie_chart([m["medium"] for m in ms], [m["spend"] for m in ms],
                                          title="Medium split", color_kind="medium")
     ta = data["top_advertisers"]
     if ta:
         names = [a["advertiser"] for a in ta[:8]]
-        out["ranking"] = charts.bar_chart(names, [a["share_pct"] for a in ta[:8]],
+        out["ranking"] = bar_chart(names, [a["share_pct"] for a in ta[:8]],
                                           title="Advertisers by share of spend (%)", colors=acols(names))
     sov = data["sov_trend"]
     if sov["labels"]:
-        out["sov"] = charts.line_chart(sov["labels"], sov["series"], title="Share of voice over time (%)",
+        out["sov"] = line_chart(sov["labels"], sov["series"], title="Share of voice over time (%)",
                                        ylabel="% of spend", colors=acols(list(sov["series"].keys())))
     cc = data["category_channels"]
     if cc:
         names = [c["channel"] for c in cc]
-        out["channels"] = charts.bar_chart(names, [c["spend"] for c in cc],
+        out["channels"] = bar_chart(names, [c["spend"] for c in cc],
                                           title="Top channels by category spend", money=True, colors=ccols(names))
     cs = data["category_split"]
     if cs and len(cs) > 1:
-        out["categories"] = charts.bar_chart([c["category"] for c in cs], [c["spend"] for c in cs],
+        out["categories"] = bar_chart([c["category"] for c in cs], [c["spend"] for c in cs],
                                              title="Spend by category", money=True, single_color=True)
     dd = data.get("deep_dive")
     if dd:
         if dd["trend"]["labels"]:
-            out["dd_trend"] = charts.line_chart(dd["trend"]["labels"], dd["trend"]["series"],
+            out["dd_trend"] = line_chart(dd["trend"]["labels"], dd["trend"]["series"],
                                                 title=f"{dd['advertiser']} spend by month", money=True)
         if dd["medium_split"]:
-            out["dd_medium"] = charts.pie_chart([m["medium"] for m in dd["medium_split"]],
+            out["dd_medium"] = pie_chart([m["medium"] for m in dd["medium_split"]],
                                                 [m["spend"] for m in dd["medium_split"]],
                                                 title=f"{dd['advertiser']} medium split", color_kind="medium")
         if dd["channels"]:
             names = [c["channel"] for c in dd["channels"]]
-            out["dd_channels"] = charts.bar_chart(names, [c["spend"] for c in dd["channels"]],
+            out["dd_channels"] = bar_chart(names, [c["spend"] for c in dd["channels"]],
                                                   title=f"{dd['advertiser']} top channels", money=True, colors=ccols(names))
     rb = data["recommended_basket"]
     if rb:
-        out["cprp"] = charts.bar_chart([f"{p['programme']} ({p['channel']})" for p in rb],
+        out["cprp"] = bar_chart([f"{p['programme']} ({p['channel']})" for p in rb],
                                        [p["cprp"] for p in rb], title="Most cost-efficient programmes (CPRP)",
                                        colors=ccols([p["channel"] for p in rb]))
     return out

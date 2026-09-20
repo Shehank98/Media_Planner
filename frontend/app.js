@@ -31,9 +31,9 @@ const selected = (sel) => Array.from($(sel).selectedOptions).map((o) => o.value)
 
 // Colour system - MUST match backend/app/palette.py so table swatches line up
 // with server-rendered chart colours (same advertiser/channel = same colour).
-const CATEGORICAL = ["#3F6DA6", "#B4523C", "#C08A2E", "#5B8C5A", "#6B5B95", "#B23B6E", "#4B7B8C", "#8A6D3B", "#A0553B"];
-const OTHERS_COLOR = "#8A8D91";
-const MEDIUM_COLORS = { TV: "#1C5D7C", Radio: "#B8823A", Press: "#6C7A45" };
+const CATEGORICAL = ["#6AA0F0", "#F07A52", "#E6B23E", "#63C08C", "#B98AE0", "#E86FA6", "#4FC4D6", "#C9A24B", "#9A8CF0"];
+const OTHERS_COLOR = "#8A95A2";
+const MEDIUM_COLORS = { TV: "#4DA3D9", Radio: "#E6B23E", Press: "#7FB069" };
 function colorFor(name) {
   if (!name) return OTHERS_COLOR;
   if (String(name).trim().toLowerCase() === "others") return OTHERS_COLOR;
@@ -93,9 +93,25 @@ $$(".nav-item").forEach((btn) =>
     btn.classList.add("active");
     const tab = btn.dataset.tab;
     $$(".tab").forEach((t) => (t.hidden = t.id !== tab));
+    const crumb = $("#crumb-tab");
+    if (crumb) crumb.textContent = (btn.querySelector("span")?.textContent || "").trim();
     onTabShow(tab);
   })
 );
+
+// Top-bar search: filter visible table rows on the active tab.
+(function initSearch() {
+  const box = $("#global-search");
+  if (!box) return;
+  box.addEventListener("input", () => {
+    const q = box.value.trim().toLowerCase();
+    const active = $$(".tab").find((t) => !t.hidden);
+    if (!active) return;
+    active.querySelectorAll("tbody tr").forEach((tr) => {
+      tr.style.display = !q || tr.textContent.toLowerCase().includes(q) ? "" : "none";
+    });
+  });
+})();
 
 const loaded = {};
 function onTabShow(tab) {
