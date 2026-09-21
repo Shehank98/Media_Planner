@@ -133,6 +133,18 @@ def narrate(body: dict = Body(...), db: Session = Depends(get_db)):
     return {"narrative": text, "computed": computed}
 
 
+# --- Category research (Gemini + Google Search grounding) -----------------
+@router.post("/category-research")
+def category_research(body: dict = Body(...)):
+    category = (body.get("category") or "").strip()
+    if not category:
+        raise HTTPException(400, "category is required")
+    try:
+        return gemini.category_research(category, body.get("region", ""), body.get("time_frame", ""))
+    except gemini.GeminiUnavailable as exc:
+        raise HTTPException(503, str(exc))
+
+
 # --- Report export --------------------------------------------------------
 @router.get("/report/preview", response_class=HTMLResponse)
 def report_preview(product_groups: list[str] = Query(...), lead_advertiser: str | None = None, db: Session = Depends(get_db)):

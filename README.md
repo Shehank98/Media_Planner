@@ -71,6 +71,13 @@ rate card version effective on/before the programme's date). The **basket
 builder** sums TVR, reach, cost and blended CPRP for selected programmes. Raw
 rate + duration are always shown alongside so the 30s normalisation is visible.
 
+**Category research (web).** A card in Tab 1 runs Gemini with Google Search
+grounding (`POST /api/tab1/category-research`) to produce a structured market
+analysis of a category (market size, growth, top players by share, qualitative
+dimensions, key insights, confidence notes) with cited sources. This is live web
+research, separate from your uploaded spend data, and needs `GEMINI_API_KEY` set
+to a Search-grounding-capable model (default `gemini-2.5-flash`).
+
 ### Tab 3 — Channel View
 A **channel-first drill-down on the same Com-only adex dataset** (not a separate
 upload): pick a channel → top advertisers on it → their top programmes.

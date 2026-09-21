@@ -137,6 +137,22 @@ a { color: var(--accent); text-decoration: none; }
 .scatter-tip b { color: var(--ink); }
 .scatter-tip .mono { font-family: var(--mono); color: var(--val); }
 .scatter-note { padding: 0 16px 14px; font-size: 12px; color: var(--muted); }
+
+/* Rendered markdown (category research) */
+.md { margin-top: 14px; font-size: 13.5px; line-height: 1.6; color: var(--sec); }
+.md h3 { font-size: 15px; color: var(--head); margin: 20px 0 8px; padding: 0; border: none; font-weight: 600; }
+.md h3:first-child { margin-top: 4px; }
+.md h4 { font-size: 12.5px; color: var(--accent); margin: 16px 0 6px; text-transform: none; font-weight: 600; }
+.md p { margin: 8px 0; max-width: 92ch; }
+.md ul { margin: 8px 0; padding-left: 20px; }
+.md li { margin: 4px 0; }
+.md a { color: var(--accent); }
+.md strong { color: var(--ink); font-weight: 600; }
+.md table { margin: 10px 0 16px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.md .cr-loading { color: var(--muted); }
+.cr-sources { margin-top: 8px; font-size: 12px; color: var(--muted); }
+.cr-sources a { display: inline-block; margin: 3px 8px 3px 0; padding: 3px 9px; border: 1px solid var(--line-2); border-radius: 999px; color: var(--sec); }
+.cr-sources a:hover { border-color: var(--accent); color: var(--accent); }
 .kpi-label { font-size: 11px; letter-spacing: .03em; color: var(--muted); font-weight: 500; text-transform: uppercase; }
 .kpi-value { font: 600 24px/1.1 var(--mono); color: var(--ink); margin-top: 7px; letter-spacing: -0.01em; }
 .kpi-sub { font-size: 11.5px; color: var(--dim); margin-top: 5px; }

@@ -257,6 +257,39 @@ async function initTab1() {
   $$("#t1-report-menu button").forEach((b) =>
     b.addEventListener("click", () => exportReport(b.dataset.fmt))
   );
+
+  // Category research (web) defaults + prefill from the selected group.
+  $("#cr-region").value = "Sri Lanka";
+  $("#cr-timeframe").value = "Last 12 months";
+  $("#t1-groups").addEventListener("change", () => {
+    const g = selected("#t1-groups")[0];
+    if (g && !$("#cr-category").value) $("#cr-category").value = g;
+  });
+  $("#cr-run").addEventListener("click", researchCategory);
+}
+
+async function researchCategory() {
+  const category = $("#cr-category").value.trim() || selected("#t1-groups")[0] || "";
+  if (!category) return toast("Enter a category to research", true);
+  const box = $("#cr-result");
+  box.innerHTML = '<div class="md cr-loading"><span class="spinner"></span> Researching the web (this can take 20-40s)…</div>';
+  try {
+    const r = await api("/api/tab1/category-research", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ category, region: $("#cr-region").value, time_frame: $("#cr-timeframe").value }),
+    });
+    const md = el("div", { class: "md", html: renderMarkdown(r.markdown) });
+    box.innerHTML = "";
+    box.append(md);
+    if (r.sources && r.sources.length) {
+      const src = el("div", { class: "cr-sources" });
+      src.append(el("span", {}, "Sources: "));
+      r.sources.slice(0, 12).forEach((s) => src.append(el("a", { href: s.uri, target: "_blank", rel: "noopener" }, s.title)));
+      box.append(src);
+    }
+  } catch (e) {
+    box.innerHTML = `<div class="status err" style="padding:10px 0">${e.message}</div>`;
+  }
 }
 
 async function runTab1() {
@@ -540,6 +573,44 @@ function chartCard(title, src) {
   const card = el("div", { class: "card" });
   card.append(chartFragment(title, src));
   return card;
+}
+
+// Minimal, safe markdown -> HTML (headings, tables, lists, bold, links).
+function renderMarkdown(md) {
+  const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const inline = (s) => esc(s)
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  const lines = md.split("\n");
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    // table block
+    if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1])) {
+      const cells = (r) => r.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+      const head = cells(line);
+      i += 2;
+      const body = [];
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) { body.push(cells(lines[i])); i++; }
+      let t = "<table><thead><tr>" + head.map((h) => `<th>${inline(h)}</th>`).join("") + "</tr></thead><tbody>";
+      body.forEach((r) => { t += "<tr>" + head.map((_, j) => `<td>${inline(r[j] || "")}</td>`).join("") + "</tr>"; });
+      out.push(t + "</tbody></table>");
+      continue;
+    }
+    if (/^###\s+/.test(line)) { out.push(`<h4>${inline(line.replace(/^###\s+/, ""))}</h4>`); i++; continue; }
+    if (/^##\s+/.test(line)) { out.push(`<h3>${inline(line.replace(/^##\s+/, ""))}</h3>`); i++; continue; }
+    if (/^#\s+/.test(line)) { out.push(`<h3>${inline(line.replace(/^#\s+/, ""))}</h3>`); i++; continue; }
+    if (/^\s*[-*]\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) { items.push(`<li>${inline(lines[i].replace(/^\s*[-*]\s+/, ""))}</li>`); i++; }
+      out.push("<ul>" + items.join("") + "</ul>");
+      continue;
+    }
+    if (line.trim()) { out.push(`<p>${inline(line)}</p>`); }
+    i++;
+  }
+  return out.join("");
 }
 
 // Inline sparkline SVG (84x26 viewBox) for KPI cards.

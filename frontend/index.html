@@ -86,6 +86,21 @@
         <div id="t1-kpis" class="kpis"></div>
         <div id="t1-ai" class="card ai-card" hidden></div>
         <div id="t1-results" class="results"></div>
+
+        <div class="card">
+          <h3>Category research <span class="tag">web · Gemini + Google Search</span></h3>
+          <div class="cbody">
+            <p>Live market research on a category from external web sources (market size, growth, top players, trends). Separate from your uploaded spend data.</p>
+            <div class="ask-row" style="padding:0">
+              <input id="cr-category" type="text" placeholder="Category, e.g. Banking" style="min-width:200px" />
+              <input id="cr-region" type="text" placeholder="Region" style="min-width:150px" />
+              <input id="cr-timeframe" type="text" placeholder="Time frame" style="min-width:150px" />
+              <button class="btn primary" id="cr-run">Research</button>
+            </div>
+            <div id="cr-result"></div>
+          </div>
+        </div>
+
         <div class="card">
           <h3>Ask a follow-up</h3>
           <p class="muted">Gemini narrates the pre-computed figures in your agency tone.</p>

@@ -30,6 +30,108 @@ class GeminiUnavailable(RuntimeError):
     pass
 
 
+# --------------------------------------------------------------------------
+# Category research (Gemini + Google Search grounding)
+# --------------------------------------------------------------------------
+_CATEGORY_SYSTEM_PROMPT = """You are a category analysis engine. Given a category or industry name, you must research it using Google Search grounding and produce a structured analysis covering both quantitative and qualitative dimensions.
+
+STEPS:
+1. Search Google for the most recent and authoritative data on the given category: market size, growth rate, key players, pricing, market share, and recent news/trends.
+2. Cross-check facts across at least 2-3 sources before including them.
+3. Separate findings into Quantitative and Qualitative sections.
+4. Output must include markdown tables for the quantitative data. Do not skip the tables even if data is partial, mark unknowns as "N/A".
+5. Cite the source (domain name) next to each data point in the tables.
+
+OUTPUT FORMAT (strict):
+
+## Category Overview
+2-3 sentence summary of the category.
+
+## Quantitative Analysis
+
+| Metric | Value | Source | Date/Period |
+|---|---|---|---|
+| Market Size | | | |
+| YoY Growth Rate | | | |
+| Number of Key Players | | | |
+| Average Price/CPM/Unit Cost | | | |
+| [Add other relevant metrics] | | | |
+
+### Top Players by Market Share
+| Rank | Player | Market Share % | Revenue/Volume | Source |
+|---|---|---|---|---|
+
+## Qualitative Analysis
+
+| Dimension | Observation | Supporting Evidence | Source |
+|---|---|---|---|
+| Consumer Behavior | | | |
+| Competitive Dynamics | | | |
+| Regulatory Environment | | | |
+| Emerging Trends | | | |
+| Risks/Challenges | | | |
+
+## Key Insights
+- 3-5 bullet points synthesizing quant + qual findings
+
+## Confidence Notes
+Flag any data points that are estimates, outdated, or from a single unverified source.
+
+Do not use em dashes or en dashes."""
+
+
+def category_research(category: str, region: str = "", time_frame: str = "") -> dict:
+    """Research a category with Gemini + Google Search grounding.
+
+    Uses a direct REST call to the Generative Language API (matching the
+    documented google_search tool) so it works regardless of the installed
+    google-genai version. Returns {markdown, sources}.
+    """
+    import urllib.request
+
+    if not settings.gemini_api_key:
+        raise GeminiUnavailable("GEMINI_API_KEY is not configured")
+
+    user_query = f'USER INPUT: Category = "{category}", Region = "{region or "global"}", Time Frame = "{time_frame or "most recent"}"'
+    body = {
+        "contents": [{"parts": [{"text": _CATEGORY_SYSTEM_PROMPT + "\n\n" + user_query}]}],
+        "tools": [{"google_search": {}}],
+        "generationConfig": {"temperature": 0.2},
+    }
+    model = settings.gemini_model or "gemini-2.5-flash"
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        f"?key={settings.gemini_api_key}"
+    )
+    req = urllib.request.Request(
+        url, data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json"}, method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise GeminiUnavailable(f"category research request failed: {exc}")
+
+    cand = (data.get("candidates") or [{}])[0]
+    parts = (cand.get("content") or {}).get("parts") or []
+    markdown = "\n".join(p.get("text", "") for p in parts if p.get("text")).strip()
+    markdown = markdown.replace("—", " - ").replace("–", "-")
+
+    # Grounding sources (deduped by uri).
+    sources, seen = [], set()
+    for chunk in (cand.get("groundingMetadata") or {}).get("groundingChunks", []) or []:
+        web = chunk.get("web") or {}
+        uri = web.get("uri")
+        if uri and uri not in seen:
+            seen.add(uri)
+            sources.append({"title": web.get("title") or uri, "uri": uri})
+
+    if not markdown:
+        raise GeminiUnavailable("no analysis returned (the model may not support Google Search grounding)")
+    return {"markdown": markdown, "sources": sources}
+
+
 def _client():
     if not settings.gemini_api_key:
         raise GeminiUnavailable("GEMINI_API_KEY is not configured")
