@@ -964,6 +964,7 @@ async function loadSettingsValues() {
     $("#analysis-text").value = s.analysis_guide || "";
     $("#template-text").value = s.template_guide || "";
     $("#va-themes-text").value = (s.va_themes || []).join("\n");
+    if ($("#fiscal-year-select")) $("#fiscal-year-select").value = String(s.fiscal_start_month || 1);
   } catch (e) { toast(e.message, true); }
 }
 
@@ -1002,6 +1003,19 @@ async function initSettings() {
   $("#template-save").addEventListener("click", () => saveGuide("template", "#template-text", "#template-status"));
   $("#analysis-upload").addEventListener("click", () => uploadGuide("analysis", "#analysis-file"));
   $("#template-upload").addEventListener("click", () => uploadGuide("template", "#template-file"));
+
+  $("#fiscal-year-save").addEventListener("click", async () => {
+    try {
+      const r = await api("/api/settings/fiscal-year", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ start_month: Number($("#fiscal-year-select").value) }),
+      });
+      $("#fiscal-year-status").className = "status ok";
+      $("#fiscal-year-status").textContent = r.fiscal_start_month === 4
+        ? "Saved. Years now run Apr to Mar (financial year)."
+        : "Saved. Years now run Jan to Dec (full year).";
+    } catch (e) { toast(e.message, true); }
+  });
 
   $("#va-themes-save").addEventListener("click", async () => {
     const themes = $("#va-themes-text").value.split("\n").map((t) => t.trim()).filter(Boolean);

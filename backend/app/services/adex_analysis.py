@@ -10,24 +10,52 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import datetime as dt
 
-from sqlalchemy import Integer, and_, cast, distinct, extract, func, select
+from sqlalchemy import Integer, and_, case, cast, distinct, extract, func, select
 from sqlalchemy.orm import Session
 
 from ..models import AdexRow
 
 COM = AdexRow.va_com == "Com"
 
+_MONTHS = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def fiscal_bounds(year: int, start_month: int = 1) -> tuple[dt.date, dt.date]:
+    """[from, to) date range for reporting `year`. With start_month=1 this is
+    the calendar year; with start_month=4 it is Apr `year` to Mar `year`+1."""
+    return dt.date(year, start_month, 1), dt.date(year + 1, start_month, 1)
+
+
+def fiscal_year_expr(start_month: int = 1):
+    """SQL expression giving the reporting year a spot_date belongs to."""
+    y = cast(extract("year", AdexRow.spot_date), Integer)
+    if start_month == 1:
+        return y
+    m = cast(extract("month", AdexRow.spot_date), Integer)
+    return y - case((m < start_month, 1), else_=0)
+
+
+def fiscal_label(year: int, start_month: int = 1) -> tuple[str, str]:
+    """(short label, span text) for a reporting year, e.g. calendar -> ('2023',
+    'Jan 2023 - Dec 2023'); financial (Apr) -> ('2023/24', 'Apr 2023 - Mar 2024')."""
+    if start_month == 1:
+        return str(year), f"Jan {year} - Dec {year}"
+    end_month = start_month - 1 or 12
+    return f"{year}/{str(year + 1)[-2:]}", f"{_MONTHS[start_month]} {year} - {_MONTHS[end_month]} {year + 1}"
+
+
 # Optional year scope. When set (via `year_scope`), every query built through
-# `_where` is transparently restricted to that calendar year, so the whole
-# analysis/report pipeline can be re-run for a single year without threading a
-# `year` argument through dozens of functions.
-_YEAR_SCOPE: contextvars.ContextVar[int | None] = contextvars.ContextVar("adex_year_scope", default=None)
+# `_where` is transparently restricted to that reporting year (calendar or
+# financial), so the whole analysis/report pipeline can be re-run for a single
+# year without threading a `year` argument through dozens of functions.
+_YEAR_SCOPE: contextvars.ContextVar[tuple[int, int] | None] = contextvars.ContextVar("adex_year_scope", default=None)
 
 
 @contextlib.contextmanager
-def year_scope(year: int | None):
-    token = _YEAR_SCOPE.set(year)
+def year_scope(year: int | None, start_month: int = 1):
+    token = _YEAR_SCOPE.set((year, start_month) if year is not None else None)
     try:
         yield
     finally:
@@ -47,8 +75,12 @@ def _adv_filter(advertisers: list[str] | None):
 
 
 def _where(*conds):
-    year = _YEAR_SCOPE.get()
-    extra = cast(extract("year", AdexRow.spot_date), Integer) == year if year is not None else None
+    scope = _YEAR_SCOPE.get()
+    extra = None
+    if scope is not None:
+        year, start_month = scope
+        lo, hi = fiscal_bounds(year, start_month)
+        extra = and_(AdexRow.spot_date >= lo, AdexRow.spot_date < hi)
     return and_(*[c for c in (*conds, extra) if c is not None])
 
 
@@ -378,16 +410,16 @@ def advertiser_channel_breakdown(db: Session, product_groups=None, advertisers=N
     return out[:top_adv]
 
 
-def yearly_analysis(db: Session, product_groups=None, advertisers=None, top_adv=12) -> list[dict]:
-    """A full breakdown per year, mirroring the overall report but scoped to
-    each year: total Com spend, YoY change, monthly spend, medium split,
-    advertiser ranking (Com spend + share within the year), category split
-    (when several categories are selected) and V/A bonus. Ordered oldest to
+def yearly_analysis(db: Session, product_groups=None, advertisers=None, top_adv=12, start_month=1) -> list[dict]:
+    """A full breakdown per reporting year, mirroring the overall report but
+    scoped to each year: total Com spend, YoY change, monthly spend, medium
+    split, advertiser ranking (Com spend + share within the year), category
+    split (when several categories are selected) and V/A bonus. `start_month`
+    picks calendar (1) vs financial (e.g. 4 = Apr-Mar) years. Ordered oldest to
     newest. All figures are Com (paid); V/A is reported separately.
     """
-    yr = cast(extract("year", AdexRow.spot_date), Integer)
+    yr = fiscal_year_expr(start_month)
     mn = cast(extract("month", AdexRow.spot_date), Integer)
-    base = _where(AdexRow.spot_date.isnot(None), _pg_filter(product_groups), _adv_filter(advertisers))
     com_base = _where(COM, AdexRow.spot_date.isnot(None), _pg_filter(product_groups), _adv_filter(advertisers))
 
     # One grouped pass per dimension, bucketed by year in Python.
@@ -429,7 +461,6 @@ def yearly_analysis(db: Session, product_groups=None, advertisers=None, top_adv=
         by_cat.setdefault(int(y), {})[c or "Unknown"] = round(s or 0, 2)
     by_va = {int(y): (n or 0, round(sec or 0, 1)) for y, n, sec in va_rows}
 
-    _MONTHS = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     out = []
     prev_total = None
     for y in years:
@@ -441,8 +472,11 @@ def yearly_analysis(db: Session, product_groups=None, advertisers=None, top_adv=
         med = sorted(by_med.get(y, {}).items(), key=lambda kv: kv[1], reverse=True)
         med_list = [{"medium": m, "spend": s, "share_pct": round(100 * s / total, 1) if total else 0.0}
                     for m, s in med]
-        months = sorted(by_mon.get(y, []))
-        monthly = {"labels": [f"{y}-{mo:02d}" for mo, _ in months],
+        # Order months by their position within the reporting year (Apr first
+        # for a financial year), and label each with its true calendar year.
+        months = sorted(by_mon.get(y, []), key=lambda mo_s: (mo_s[0] - start_month) % 12)
+        cal_year = lambda mo: y if mo >= start_month else y + 1
+        monthly = {"labels": [f"{cal_year(mo)}-{mo:02d}" for mo, _ in months],
                    "month_names": [_MONTHS[mo] if 1 <= mo <= 12 else str(mo) for mo, _ in months],
                    "spend": [s for _, s in months]}
         cats = sorted(by_cat.get(y, {}).items(), key=lambda kv: kv[1], reverse=True)
@@ -450,8 +484,11 @@ def yearly_analysis(db: Session, product_groups=None, advertisers=None, top_adv=
                     for c, s in cats]
         va_spots, va_secs = by_va.get(y, (0, 0.0))
         yoy = round(100 * (total - prev_total) / prev_total, 1) if prev_total else None
+        label, span = fiscal_label(y, start_month)
         out.append({
             "year": y,
+            "label": label,
+            "span": span,
             "total_spend": total,
             "yoy_pct": yoy,
             "advertisers_count": len(advs),

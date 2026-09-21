@@ -21,7 +21,19 @@ def get_settings(db: Session = Depends(get_db)):
         "analysis_guide": prompt_guide.get_logic(db),
         "template_guide": prompt_guide.get_format(db),
         "va_themes": settings_store.get_va_themes(db),
+        "fiscal_start_month": settings_store.get_fiscal_start_month(db),
     }
+
+
+@router.put("/fiscal-year")
+def set_fiscal_year(body: dict = Body(...), db: Session = Depends(get_db)):
+    """Set the reporting-year basis: start month 1 = calendar year (Jan-Dec),
+    4 = financial year (Apr-Mar). Applies to every per-year analysis."""
+    try:
+        m = settings_store.set_fiscal_start_month(db, int(body.get("start_month", 1)))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, str(exc))
+    return {"fiscal_start_month": m}
 
 
 @router.put("/va-themes")

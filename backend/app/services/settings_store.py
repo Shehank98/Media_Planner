@@ -21,6 +21,7 @@ PROMPT_GUIDE_LOGIC_KEY = "prompt_guide_logic"
 PROMPT_GUIDE_FORMAT_KEY = "prompt_guide_format"
 ADEX_MAPPING_KEY = "adex_header_mapping"
 VA_THEMES_KEY = "va_themes"
+FISCAL_START_MONTH_KEY = "fiscal_start_month"
 
 # Advt_Theme values that mark a spot as value addition (bonus airtime) rather
 # than paid commercial time. Seeded with the examples the user gave; fully
@@ -83,6 +84,25 @@ def set_va_themes(db: Session, themes: list[str]) -> list[str]:
             seen.add(s.lower())
     put(db, VA_THEMES_KEY, json.dumps(cleaned))
     return cleaned
+
+
+def get_fiscal_start_month(db: Session) -> int:
+    """First month of the reporting year. 1 = calendar year (Jan-Dec, default);
+    4 = financial year (Apr-Mar). Any 1-12 value is accepted."""
+    raw = get(db, FISCAL_START_MONTH_KEY)
+    try:
+        m = int(raw)
+        return m if 1 <= m <= 12 else 1
+    except (TypeError, ValueError):
+        return 1
+
+
+def set_fiscal_start_month(db: Session, month: int) -> int:
+    m = int(month)
+    if not 1 <= m <= 12:
+        raise ValueError("fiscal start month must be 1-12")
+    put(db, FISCAL_START_MONTH_KEY, str(m))
+    return m
 
 
 def all_settings(db: Session) -> dict:

@@ -18,20 +18,22 @@ from sqlalchemy.orm import Session
 from .. import charts, palette
 from ..llm import gemini, prompt_guide
 from . import adex_analysis as ax
-from . import basket, colors, market
+from . import basket, colors, market, settings_store
 
 # --------------------------------------------------------------------------
 # Data
 # --------------------------------------------------------------------------
 def gather(db: Session, product_groups: list[str], lead_advertiser: str | None,
            include_research: bool = False, year: int | None = None) -> dict:
-    # A year scope restricts every query below to that calendar year, so the
-    # same gathering pass produces a full report for a single year.
-    with ax.year_scope(year):
-        return _gather(db, product_groups, lead_advertiser, include_research, year)
+    # A year scope restricts every query below to that reporting year (calendar
+    # or financial per Settings), so the same gathering pass produces a full
+    # report for a single year.
+    start_month = settings_store.get_fiscal_start_month(db)
+    with ax.year_scope(year, start_month):
+        return _gather(db, product_groups, lead_advertiser, include_research, year, start_month)
 
 
-def _gather(db: Session, product_groups, lead_advertiser, include_research, year) -> dict:
+def _gather(db: Session, product_groups, lead_advertiser, include_research, year, start_month=1) -> dict:
     ov = market.overview(db, product_groups)
     top_adv = ax.top_advertisers(db, product_groups, limit=12)
     total = sum(a["spend"] for a in top_adv) or ov["total_spend"] or 0.0
@@ -61,7 +63,8 @@ def _gather(db: Session, product_groups, lead_advertiser, include_research, year
         "channel_detail": ax.top_channel_advertiser_detail(db, product_groups, top_channels=5, top_adv=15),
         "advertiser_pages": ax.advertiser_channel_breakdown(db, product_groups, top_adv=20, channels_per=12),
         # Only the overall (unscoped) report carries the year-by-year section.
-        "yearly_analysis": [] if year is not None else ax.yearly_analysis(db, product_groups, top_adv=12),
+        "yearly_analysis": [] if year is not None else ax.yearly_analysis(db, product_groups, top_adv=12, start_month=start_month),
+        "fiscal_start_month": start_month,
     }
 
     if lead_advertiser:
@@ -442,8 +445,11 @@ def _year_report_html(db: Session, product_groups: list[str], year: int, summary
             [[b["advertiser"], _money(b["spend"]), b["top_medium"] or "n/a", b["top_channel"] or "n/a",
               b["top_programme"] or "n/a"] for b in bm], [False, True, False, False, False]))
 
+    label = summary.get("label") or str(year)
+    span = summary.get("span") or ""
     return f"""<div class="rp-yearpage">
-  <div class="rp-yearbanner"><span class="rp-yearnum">{year}</span>{yoy}</div>
+  <div class="rp-yearbanner"><span class="rp-yearnum">{html.escape(label)}</span>{yoy}</div>
+  <div class="rp-yearspan">{html.escape(span)}</div>
   <div class="rp-kpis">{kpi_html}</div>
   <h3>Category overview</h3>
   <div class="rp-grid">{_img(pngs.get('trend'))}{_img(pngs.get('medium'))}</div>
@@ -852,10 +858,10 @@ def build_pdf(db: Session, product_groups: list[str], lead_advertiser: str | Non
                 story.append(Paragraph(f"{yearly_no}. Year-by-Year Full Analysis", h2))
                 para("A complete report for each year using only that year's spots.")
             yoy = f"  (YoY {'+' if (ysum['yoy_pct'] or 0) >= 0 else ''}{ysum['yoy_pct']}%)" if ysum["yoy_pct"] is not None else ""
-            story.append(Paragraph(f"{yr}{yoy}", year_title))
+            story.append(Paragraph(f"{ysum.get('label', yr)}{yoy}", year_title))
             story.append(Paragraph(
-                f"Total Com {_money(yov['total_spend'])} &nbsp;|&nbsp; {yov['advertisers']} advertisers &nbsp;|&nbsp; "
-                f"{yov['channels']} channels &nbsp;|&nbsp; {yov['date_from'] or 'n/a'} to {yov['date_to'] or 'n/a'}", meta))
+                f"{ysum.get('span', '')} &nbsp;|&nbsp; Total Com {_money(yov['total_spend'])} &nbsp;|&nbsp; "
+                f"{yov['advertisers']} advertisers &nbsp;|&nbsp; {yov['channels']} channels", meta))
 
             story.append(Paragraph("Category Overview", h3)); chart("trend", src=ypngs); chart("medium", 11, src=ypngs)
             cs = ydata["category_split"]
@@ -1057,9 +1063,9 @@ def build_docx(db: Session, product_groups: list[str], lead_advertiser: str | No
                 doc.add_heading(f"{yearly_no}. Year-by-Year Full Analysis", level=1)
                 doc.add_paragraph("A complete report for each year using only that year's spots.")
             yoy = f"  (YoY {'+' if (ysum['yoy_pct'] or 0) >= 0 else ''}{ysum['yoy_pct']}%)" if ysum["yoy_pct"] is not None else ""
-            doc.add_heading(f"{yr}{yoy}", level=1)
-            doc.add_paragraph(f"Total Com {_money(yov['total_spend'])}  |  {yov['advertisers']} advertisers  |  "
-                              f"{yov['channels']} channels  |  {yov['date_from'] or 'n/a'} to {yov['date_to'] or 'n/a'}")
+            doc.add_heading(f"{ysum.get('label', yr)}{yoy}", level=1)
+            doc.add_paragraph(f"{ysum.get('span', '')}  |  Total Com {_money(yov['total_spend'])}  |  "
+                              f"{yov['advertisers']} advertisers  |  {yov['channels']} channels")
 
             doc.add_heading("Category Overview", level=2); chart("trend", src=ypngs); chart("medium", 4.2, src=ypngs)
             cs = ydata["category_split"]
@@ -1129,6 +1135,7 @@ _REPORT_CSS = """
 .rp-yearpage:first-of-type{border-top:none;margin-top:8px;}
 .rp-yearbanner{display:flex;align-items:center;gap:6px;margin:0 0 14px;}
 .rp-yearnum{font-size:30px;font-weight:700;letter-spacing:-0.02em;color:var(--ink);font-family:var(--mono);}
+.rp-yearspan{font-size:12.5px;color:var(--muted);margin:-8px 0 12px;}
 .rp-yearpage h3{font-size:14px;color:var(--ink);margin:20px 0 8px;font-weight:600;border-bottom:1px solid var(--line);padding-bottom:5px;}
 .rp-yearpage h4{font-size:12.5px;color:var(--muted);margin:14px 0 6px;font-weight:600;}
 .rp-yearpage .rp-kpis{border:1px solid var(--line2);border-radius:4px;overflow:hidden;margin:0 0 4px;}
