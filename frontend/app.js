@@ -262,21 +262,23 @@ async function initTab1() {
   $("#cr-region").value = "Sri Lanka";
   $("#cr-timeframe").value = "Last 12 months";
   $("#t1-groups").addEventListener("change", () => {
-    const g = selected("#t1-groups")[0];
-    if (g && !$("#cr-category").value) $("#cr-category").value = g;
+    $("#cr-category").value = selected("#t1-groups").join(", ");
   });
   $("#cr-run").addEventListener("click", researchCategory);
 }
 
 async function researchCategory() {
-  const category = $("#cr-category").value.trim() || selected("#t1-groups")[0] || "";
-  if (!category) return toast("Enter a category to research", true);
+  const pgs = selected("#t1-groups");
+  const advs = selected("#t1-advertisers");
+  const category = $("#cr-category").value.trim() || pgs.join(", ");
+  if (!category) return toast("Pick a product group or type a category to research", true);
   const box = $("#cr-result");
-  box.innerHTML = '<div class="md cr-loading"><span class="spinner"></span> Researching the web (this can take 20-40s)…</div>';
+  const scope = advs.length ? ` for ${advs.join(", ")}` : (pgs.length ? " with your uploaded data" : "");
+  box.innerHTML = `<div class="md cr-loading"><span class="spinner"></span> Researching the web + your data${scope} (this can take 20-40s)…</div>`;
   try {
     const r = await api("/api/tab1/category-research", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ category, region: $("#cr-region").value, time_frame: $("#cr-timeframe").value }),
+      body: JSON.stringify({ category, region: $("#cr-region").value, time_frame: $("#cr-timeframe").value, product_groups: pgs, advertisers: advs }),
     });
     const md = el("div", { class: "md", html: renderMarkdown(r.markdown) });
     box.innerHTML = "";

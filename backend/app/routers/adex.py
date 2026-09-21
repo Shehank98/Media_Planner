@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from .. import charts
 from ..database import get_db
 from ..llm import gemini, prompt_guide
-from ..services import adex_analysis, colors as colors_svc, ingest, report
+from ..services import adex_analysis, colors as colors_svc, ingest, market, report
 
 router = APIRouter(prefix="/api/tab1", tags=["tab1-category"])
 
@@ -133,14 +133,34 @@ def narrate(body: dict = Body(...), db: Session = Depends(get_db)):
     return {"narrative": text, "computed": computed}
 
 
-# --- Category research (Gemini + Google Search grounding) -----------------
+# --- Category research (Gemini + Google Search grounding + internal data) --
 @router.post("/category-research")
-def category_research(body: dict = Body(...)):
-    category = (body.get("category") or "").strip()
+def category_research(body: dict = Body(...), db: Session = Depends(get_db)):
+    pgs = body.get("product_groups") or None
+    advs = body.get("advertisers") or None
+    category = (body.get("category") or (", ".join(pgs) if pgs else "")).strip()
     if not category:
         raise HTTPException(400, "category is required")
+
+    # Blend in the client's own computed spend figures for the selection.
+    internal = None
+    if pgs:
+        ov = market.overview(db, pgs)
+        internal = {
+            "category": pgs,
+            "selected_advertisers": advs or "all in category",
+            "date_range": [ov["date_from"], ov["date_to"]],
+            "total_com_spend": ov["total_spend"],
+            "advertisers_count": ov["advertisers"],
+            "channels_count": ov["channels"],
+            "medium_split": adex_analysis.medium_split(db, pgs, advs),
+            "top_advertisers": adex_analysis.top_advertisers(db, pgs, limit=8),
+            "share_of_spend_tv": adex_analysis.share_of_spend(db, pgs, medium="TV", limit=5),
+            "monthly_trend": adex_analysis.spend_trend(db, pgs, advs, "month"),
+            "value_addition": adex_analysis.value_addition(db, pgs, advs),
+        }
     try:
-        return gemini.category_research(category, body.get("region", ""), body.get("time_frame", ""))
+        return gemini.category_research(category, body.get("region", ""), body.get("time_frame", ""), internal)
     except gemini.GeminiUnavailable as exc:
         raise HTTPException(503, str(exc))
 

@@ -80,21 +80,40 @@ Flag any data points that are estimates, outdated, or from a single unverified s
 Do not use em dashes or en dashes."""
 
 
-def category_research(category: str, region: str = "", time_frame: str = "") -> dict:
+def category_research(category: str, region: str = "", time_frame: str = "", internal: dict | None = None) -> dict:
     """Research a category with Gemini + Google Search grounding.
 
     Uses a direct REST call to the Generative Language API (matching the
     documented google_search tool) so it works regardless of the installed
     google-genai version. Returns {markdown, sources}.
+
+    When `internal` (the client's own computed spend figures for the selected
+    category/advertisers) is supplied, the model blends it with the web market
+    research and adds an "Our Position vs the Market" section.
     """
     import urllib.request
 
     if not settings.gemini_api_key:
         raise GeminiUnavailable("GEMINI_API_KEY is not configured")
 
+    prompt = _CATEGORY_SYSTEM_PROMPT
+    if internal:
+        prompt += (
+            "\n\nADDITIONAL DATA: You are also given INTERNAL AGENCY DATA - the client's own "
+            "advertising-spend figures for this category (computed from their database, Com-only, "
+            "V/A excluded). Incorporate it: use web sources for market context, and use the internal "
+            "figures EXACTLY as given (never alter them). Add this section immediately after the "
+            "Quantitative Analysis section:\n\n"
+            "## Our Position vs the Market\n"
+            "Relate the internal spend data to the market findings: where the client's selected "
+            "advertisers sit versus market leaders, spend concentration, media mix versus norms, and "
+            "gaps or opportunities. Cite internal figures with source \"internal data\".\n\n"
+            "INTERNAL AGENCY DATA (JSON):\n" + json.dumps(internal, default=str)
+        )
+
     user_query = f'USER INPUT: Category = "{category}", Region = "{region or "global"}", Time Frame = "{time_frame or "most recent"}"'
     body = {
-        "contents": [{"parts": [{"text": _CATEGORY_SYSTEM_PROMPT + "\n\n" + user_query}]}],
+        "contents": [{"parts": [{"text": prompt + "\n\n" + user_query}]}],
         "tools": [{"google_search": {}}],
         "generationConfig": {"temperature": 0.2},
     }
