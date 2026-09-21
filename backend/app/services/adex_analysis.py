@@ -358,6 +358,94 @@ def advertiser_channel_breakdown(db: Session, product_groups=None, advertisers=N
     return out[:top_adv]
 
 
+def yearly_analysis(db: Session, product_groups=None, advertisers=None, top_adv=12) -> list[dict]:
+    """A full breakdown per year, mirroring the overall report but scoped to
+    each year: total Com spend, YoY change, monthly spend, medium split,
+    advertiser ranking (Com spend + share within the year), category split
+    (when several categories are selected) and V/A bonus. Ordered oldest to
+    newest. All figures are Com (paid); V/A is reported separately.
+    """
+    yr = cast(extract("year", AdexRow.spot_date), Integer)
+    mn = cast(extract("month", AdexRow.spot_date), Integer)
+    base = _where(AdexRow.spot_date.isnot(None), _pg_filter(product_groups), _adv_filter(advertisers))
+    com_base = _where(COM, AdexRow.spot_date.isnot(None), _pg_filter(product_groups), _adv_filter(advertisers))
+
+    # One grouped pass per dimension, bucketed by year in Python.
+    adv_rows = db.execute(
+        select(yr, AdexRow.advertiser, func.sum(AdexRow.cost), func.count())
+        .where(com_base).group_by(yr, AdexRow.advertiser)
+    ).all()
+    med_rows = db.execute(
+        select(yr, AdexRow.medium, func.sum(AdexRow.cost)).where(com_base).group_by(yr, AdexRow.medium)
+    ).all()
+    mon_rows = db.execute(
+        select(yr, mn, func.sum(AdexRow.cost)).where(com_base).group_by(yr, mn).order_by(yr, mn)
+    ).all()
+    cat_rows = db.execute(
+        select(yr, AdexRow.product_group, func.sum(AdexRow.cost)).where(com_base).group_by(yr, AdexRow.product_group)
+    ).all()
+    va_rows = db.execute(
+        select(yr, func.count(), func.sum(AdexRow.dur))
+        .where(_where(AdexRow.va_com == "V/A", AdexRow.spot_date.isnot(None), _pg_filter(product_groups), _adv_filter(advertisers)))
+        .group_by(yr)
+    ).all()
+
+    years = sorted({int(r[0]) for r in mon_rows if r[0] is not None}
+                   | {int(r[0]) for r in adv_rows if r[0] is not None})
+    if not years:
+        return []
+
+    by_adv: dict[int, list] = {}
+    for y, a, s, n in adv_rows:
+        by_adv.setdefault(int(y), []).append((a or "Unknown", round(s or 0, 2), n or 0))
+    by_med: dict[int, dict] = {}
+    for y, m, s in med_rows:
+        by_med.setdefault(int(y), {})[m or "Other"] = round(s or 0, 2)
+    by_mon: dict[int, list] = {}
+    for y, m, s in mon_rows:
+        by_mon.setdefault(int(y), []).append((int(m) if m else 0, round(s or 0, 2)))
+    by_cat: dict[int, dict] = {}
+    for y, c, s in cat_rows:
+        by_cat.setdefault(int(y), {})[c or "Unknown"] = round(s or 0, 2)
+    by_va = {int(y): (n or 0, round(sec or 0, 1)) for y, n, sec in va_rows}
+
+    _MONTHS = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    out = []
+    prev_total = None
+    for y in years:
+        advs = sorted(by_adv.get(y, []), key=lambda x: x[1], reverse=True)
+        total = round(sum(a[1] for a in advs), 2)
+        adv_list = [{"advertiser": a, "spend": s, "spots": n,
+                     "share_pct": round(100 * s / total, 1) if total else 0.0}
+                    for a, s, n in advs[:top_adv]]
+        med = sorted(by_med.get(y, {}).items(), key=lambda kv: kv[1], reverse=True)
+        med_list = [{"medium": m, "spend": s, "share_pct": round(100 * s / total, 1) if total else 0.0}
+                    for m, s in med]
+        months = sorted(by_mon.get(y, []))
+        monthly = {"labels": [f"{y}-{mo:02d}" for mo, _ in months],
+                   "month_names": [_MONTHS[mo] if 1 <= mo <= 12 else str(mo) for mo, _ in months],
+                   "spend": [s for _, s in months]}
+        cats = sorted(by_cat.get(y, {}).items(), key=lambda kv: kv[1], reverse=True)
+        cat_list = [{"category": c, "spend": s, "share_pct": round(100 * s / total, 1) if total else 0.0}
+                    for c, s in cats]
+        va_spots, va_secs = by_va.get(y, (0, 0.0))
+        yoy = round(100 * (total - prev_total) / prev_total, 1) if prev_total else None
+        out.append({
+            "year": y,
+            "total_spend": total,
+            "yoy_pct": yoy,
+            "advertisers_count": len(advs),
+            "advertisers": adv_list,
+            "medium_split": med_list,
+            "monthly": monthly,
+            "category_split": cat_list,
+            "va_spots": va_spots,
+            "va_seconds": va_secs,
+        })
+        prev_total = total
+    return out
+
+
 def benchmark(db: Session, product_groups, advertisers: list[str]) -> list[dict]:
     """Per-advertiser comparison row: total spend, top medium, top channel,
     top programme, and medium mix."""
