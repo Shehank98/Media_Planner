@@ -19,9 +19,10 @@ def norm_medium(value: str | None) -> str | None:
     s = str(value).strip().lower()
     if not s:
         return None
-    if s.startswith("tv") or "televi" in s:
+    padded = f" {s} "
+    if s.startswith("tv") or " tv" in padded or "televi" in s:
         return "TV"
-    if "radio" in s or s == "fm" or s.endswith(" fm"):
+    if "radio" in s or " fm" in padded:
         return "Radio"
     if "press" in s or "print" in s or "news" in s or "paper" in s or "mag" in s:
         return "Press"
@@ -31,9 +32,12 @@ def norm_medium(value: str | None) -> str | None:
 def medium_from_channel(channel: str | None) -> str | None:
     """Infer the canonical medium from a channel label's prefix.
 
-    "Tv - Sirasa tv" -> TV, "Radio - Siyatha FM" -> Radio. Falls back to
-    scanning the whole channel string when there is no clear prefix."""
+    "Tv - Sirasa tv" -> TV, "Radio - Siyatha FM" -> Radio. Anything a channel
+    resolves to that is not TV or Radio is treated as Press (newspapers and
+    magazines rarely carry a clear prefix), so every channel with a value maps
+    to one of TV / Radio / Press. An empty channel stays None."""
     if not channel:
         return None
     prefix = _SEP.split(str(channel).strip(), 1)[0].strip()
-    return norm_medium(prefix) or norm_medium(str(channel))
+    m = norm_medium(prefix) or norm_medium(str(channel))
+    return m if m in ("TV", "Radio") else "Press"
