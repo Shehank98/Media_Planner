@@ -10,6 +10,7 @@ Flow:
 from __future__ import annotations
 
 import os
+import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
@@ -23,6 +24,7 @@ from ..services import ingest, rate_cards
 router = APIRouter(tags=["uploads"])
 
 _KINDS = {"rate_card", "adex", "tvr"}
+_CHUNK = 1024 * 1024  # stream to disk 1 MB at a time so big files never sit in RAM
 
 
 @router.post("/api/uploads/{kind}")
@@ -30,19 +32,46 @@ async def upload(kind: str, background: BackgroundTasks, file: UploadFile = File
     if kind not in _KINDS:
         raise HTTPException(400, f"unknown upload kind: {kind}")
 
-    contents = await file.read()
     max_bytes = settings.max_upload_mb * 1024 * 1024
-    if len(contents) > max_bytes:
-        raise HTTPException(413, f"file exceeds {settings.max_upload_mb} MB limit")
+
+    # Stream the upload straight to a temp file in chunks, enforcing the size
+    # limit as we go. This keeps memory flat regardless of file size (a large
+    # xlsx is never fully loaded into RAM) and lets us reject oversize files
+    # before doing any work.
+    tmp = os.path.join(jobs.uploads_dir(), f"tmp-{uuid.uuid4()}")
+    size = 0
+    try:
+        with open(tmp, "wb") as fh:
+            while True:
+                chunk = await file.read(_CHUNK)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > max_bytes:
+                    raise HTTPException(
+                        413,
+                        f"file is {size / 1024 / 1024:.0f} MB, over the {settings.max_upload_mb} MB "
+                        f"limit. Raise MAX_UPLOAD_MB in the deployment settings to allow larger files.",
+                    )
+                fh.write(chunk)
+    except BaseException:
+        _quiet_remove(tmp)
+        raise
 
     job_id = jobs.new_job(kind, file.filename or "upload.xlsx")
     dest = os.path.join(jobs.uploads_dir(), job_id)
-    with open(dest, "wb") as fh:
-        fh.write(contents)
+    os.replace(tmp, dest)
 
     # Parse off the request thread; return immediately.
     background.add_task(jobs.run_parse_job, job_id, kind, dest)
     return {"job_id": job_id, "status": "pending", "kind": kind}
+
+
+def _quiet_remove(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 
 @router.get("/api/jobs/{job_id}")
