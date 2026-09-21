@@ -93,11 +93,11 @@ def _summary(kind: str, payload) -> dict:
         }
     if kind == "adex":
         return {
-            k: payload[k]
+            k: payload.get(k)
             for k in (
                 "sheet_name", "row_count", "com_rows", "va_rows",
                 "com_spend_total", "header_mismatch", "missing_required",
-                "headers_seen",
+                "headers_seen", "medium_derived", "va_derived", "va_themes_used",
             )
         }
     if kind == "tvr":
@@ -112,7 +112,18 @@ def run_parse_job(job_id: str, kind: str, file_path: str) -> None:
     """Background worker. Never raises to the caller - records failure on the Job."""
     _set_status(job_id, "parsing")
     try:
-        payload = _PARSERS[kind](file_path)
+        if kind == "adex":
+            # The adex parser derives V/A vs Com from the VA marker themes
+            # configured in Settings, so load them for this parse.
+            from .services import settings_store
+            db = SessionLocal()
+            try:
+                va_themes = settings_store.get_va_themes(db)
+            finally:
+                db.close()
+            payload = adex_parser.parse_workbook(file_path, va_themes=va_themes)
+        else:
+            payload = _PARSERS[kind](file_path)
         with open(staged_path(job_id), "w", encoding="utf-8") as fh:
             json.dump({"kind": kind, "payload": payload, "summary": _summary(kind, payload)}, fh)
         _set_status(job_id, "awaiting_review")

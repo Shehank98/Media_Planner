@@ -6,6 +6,7 @@ repeat uploads), and the two prompt-guide blocks.
 from __future__ import annotations
 
 import datetime as dt
+import json
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -19,6 +20,12 @@ PRIME_END_KEY = "prime_end"
 PROMPT_GUIDE_LOGIC_KEY = "prompt_guide_logic"
 PROMPT_GUIDE_FORMAT_KEY = "prompt_guide_format"
 ADEX_MAPPING_KEY = "adex_header_mapping"
+VA_THEMES_KEY = "va_themes"
+
+# Advt_Theme values that mark a spot as value addition (bonus airtime) rather
+# than paid commercial time. Seeded with the examples the user gave; fully
+# editable in Settings. Matching is exact and case-insensitive.
+DEFAULT_VA_THEMES = ["Next Card", "-BB"]
 
 
 def get(db: Session, key: str, default: str | None = None) -> str | None:
@@ -48,6 +55,34 @@ def set_prime_window(db: Session, start: str, end: str) -> None:
         raise ValueError("prime window times must be HH:MM")
     put(db, PRIME_START_KEY, start)
     put(db, PRIME_END_KEY, end)
+
+
+def get_va_themes(db: Session) -> list[str]:
+    """VA marker themes. Unset -> the seeded defaults; an explicit empty list is
+    respected (every row then counts as Com)."""
+    raw = get(db, VA_THEMES_KEY)
+    if raw is None:
+        return list(DEFAULT_VA_THEMES)
+    try:
+        val = json.loads(raw)
+        if isinstance(val, list):
+            return [str(x).strip() for x in val if str(x).strip()]
+    except (ValueError, TypeError):
+        pass
+    # Legacy / newline-delimited fallback.
+    return [t.strip() for t in raw.replace(",", "\n").split("\n") if t.strip()]
+
+
+def set_va_themes(db: Session, themes: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for t in themes or []:
+        s = str(t).strip()
+        if s and s.lower() not in seen:
+            cleaned.append(s)
+            seen.add(s.lower())
+    put(db, VA_THEMES_KEY, json.dumps(cleaned))
+    return cleaned
 
 
 def all_settings(db: Session) -> dict:

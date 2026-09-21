@@ -8,6 +8,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from ..models import AdexRow, Batch, TvrRow
+from ..utils.media import medium_from_channel, norm_medium
 from ..utils.timeparse import in_window, parse_time
 from . import colors, settings_store
 
@@ -33,7 +34,7 @@ def commit_adex(db: Session, filename: str, payload: dict) -> dict:
                 product=r.get("product"),
                 advt_theme=r.get("advt_theme"),
                 va_com=r.get("va_com"),
-                medium=_norm_medium(r.get("medium")),
+                medium=norm_medium(r.get("medium")) or medium_from_channel(r.get("channel")),
                 ads=r.get("ads"),
                 channel=r.get("channel"),
                 program=r.get("program"),
@@ -94,19 +95,6 @@ def commit_tvr(db: Session, filename: str, payload: dict) -> dict:
     db.commit()
     colors.clear_cache()
     return {"batch_id": batch_id, "rows": len(rows)}
-
-
-def _norm_medium(m: str | None) -> str | None:
-    if not m:
-        return None
-    s = m.strip().lower()
-    if s.startswith("tv") or "televi" in s:
-        return "TV"
-    if "radio" in s or s == "fm":
-        return "Radio"
-    if "press" in s or "print" in s or "news" in s or "paper" in s:
-        return "Press"
-    return m.strip()
 
 
 def list_batches(db: Session, kind: str) -> list[dict]:

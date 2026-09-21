@@ -1,9 +1,19 @@
-"""Adex (advertising expenditure) workbook parser - Tab 1 / Tab 3 dataset.
+"""Adex (advertising expenditure / media-watch) workbook parser - Tab 1 / Tab 3.
 
-Expected columns:
-  Product_Group, Advertiser, Product, Advt_Theme, V/A | Com, Medium, Ads,
-  Channel, Program, Dd, Mn, Yr, Day, Prog_time, Advt_time, AdPos, TotAds,
-  BrkNo, PosinBrk, AdsinBrk, Lng, Dur, Cost
+The real media-watch sheet does NOT carry Medium or V/A|Com columns:
+  Product_Group, Advertiser, Product, Advt_Theme, Ads, Channel, Program, Dd,
+  Mn, Yr, Day, Prog_time, Advt_time, AdPos, TotAds, BrkNo, PosinBrk, AdsinBrk,
+  Lng, Dur, Cost
+
+So this parser DERIVES two columns on upload:
+  * Medium  - from the Channel prefix, e.g. "Tv - Sirasa tv" -> TV,
+              "Radio - Siyatha FM" -> Radio.
+  * V/A|Com - from Advt_Theme: an exact (case-insensitive) match against the
+              VA marker themes configured in Settings marks the row as V/A;
+              everything else is Com (paid). VA is bonus airtime, excluded
+              from spend.
+If the sheet already contains a Medium or V/A|Com column, its value is used
+and only blank cells fall back to the derivation.
 
 Header validation: the canonical set is returned so the caller can compare
 against a stored mapping and flag mismatches for user confirmation before
@@ -14,6 +24,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..utils.dates import parse_row_date
+from ..utils.media import medium_from_channel, norm_medium
 from .excel import build_header_index, cell, find_column, load_sheets, to_float, to_int
 
 CANONICAL_HEADERS = [
@@ -50,8 +61,11 @@ _ALIASES = {
 }
 
 
-def parse_workbook(path: str) -> dict:
-    """Parse the first non-empty sheet. Return a summary + rows payload."""
+def parse_workbook(path: str, va_themes: list[str] | None = None) -> dict:
+    """Parse the first non-empty sheet. Return a summary + rows payload.
+
+    `va_themes` is the list of Advt_Theme values (from Settings) that mark a
+    spot as value addition; matching is exact and case-insensitive."""
     sheets = load_sheets(path)
     # Use the sheet with the most rows (adex is usually one big sheet).
     name, rows = max(sheets.items(), key=lambda kv: len(kv[1]), default=(None, []))
@@ -61,8 +75,14 @@ def parse_workbook(path: str) -> dict:
     header_index = build_header_index(rows[0])
     cols = {field: find_column(header_index, aliases) for field, aliases in _ALIASES.items()}
 
-    missing = [f for f in ("product_group", "advertiser", "va_com", "cost", "medium") if cols[f] is None]
+    # Medium and V/A|Com are derived from Channel and Advt_Theme, so they are
+    # no longer required in the sheet.
+    missing = [f for f in ("product_group", "advertiser", "cost") if cols[f] is None]
     header_mismatch = bool(missing)
+
+    va_lookup = {t.strip().lower() for t in (va_themes or []) if str(t).strip()}
+    derived_medium = cols["medium"] is None
+    derived_va = cols["va_com"] is None
 
     parsed: list[dict] = []
     com_count = va_count = 0
@@ -70,8 +90,19 @@ def parse_workbook(path: str) -> dict:
     for raw in rows[1:]:
         if raw is None or all(c is None for c in raw):
             continue
-        va_raw = cell(raw, cols["va_com"])
-        va_com = _norm_va(va_raw)
+        channel = _s(cell(raw, cols["channel"]))
+        theme = _s(cell(raw, cols["advt_theme"]))
+
+        # Medium: sheet column if present and filled, else Channel prefix.
+        medium = norm_medium(_s(cell(raw, cols["medium"]))) if cols["medium"] is not None else None
+        if not medium:
+            medium = medium_from_channel(channel)
+
+        # V/A vs Com: sheet column if present and filled, else Advt_Theme match.
+        va_com = _norm_va(cell(raw, cols["va_com"])) if cols["va_com"] is not None else None
+        if not va_com:
+            va_com = "V/A" if (theme or "").strip().lower() in va_lookup else "Com"
+
         cost = to_float(cell(raw, cols["cost"]))
         d = parse_row_date(cell(raw, cols["dd"]), cell(raw, cols["mn"]), cell(raw, cols["yr"]))
 
@@ -86,11 +117,11 @@ def parse_workbook(path: str) -> dict:
                 "product_group": _s(cell(raw, cols["product_group"])),
                 "advertiser": _s(cell(raw, cols["advertiser"])),
                 "product": _s(cell(raw, cols["product"])),
-                "advt_theme": _s(cell(raw, cols["advt_theme"])),
+                "advt_theme": theme,
                 "va_com": va_com,
-                "medium": _s(cell(raw, cols["medium"])),
+                "medium": medium,
                 "ads": _s(cell(raw, cols["ads"])),
-                "channel": _s(cell(raw, cols["channel"])),
+                "channel": channel,
                 "program": _s(cell(raw, cols["program"])),
                 "spot_date": d.isoformat() if d else None,
                 "day": _s(cell(raw, cols["day"])),
@@ -117,6 +148,9 @@ def parse_workbook(path: str) -> dict:
         "com_rows": com_count,
         "va_rows": va_count,
         "com_spend_total": round(com_spend, 2),
+        "medium_derived": derived_medium,
+        "va_derived": derived_va,
+        "va_themes_used": sorted(va_lookup),
         "rows": parsed,
     }
 

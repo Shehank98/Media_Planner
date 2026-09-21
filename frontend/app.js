@@ -899,6 +899,11 @@ function renderGenericReview(kind, jobId, review, boxSel, reload) {
   if (kind === "adex") {
     facts.append(el("li", {}, `Paid (Com) rows: ${s.com_rows}, Com spend: ${money(s.com_spend_total)}`));
     facts.append(el("li", {}, `V/A (bonus) rows excluded from spend: ${s.va_rows}`));
+    if (s.medium_derived) facts.append(el("li", {}, "Medium derived from the Channel prefix (e.g. \"Tv - Sirasa tv\" -> TV)."));
+    if (s.va_derived) {
+      const used = (s.va_themes_used || []);
+      facts.append(el("li", {}, `V/A vs Com derived from Advt_Theme using ${used.length} marker(s)${used.length ? ": " + used.join(", ") : " (none set - all rows counted as Com)"}. Edit these in Settings.`));
+    }
   }
   body.append(facts);
   if (s.header_mismatch) {
@@ -949,6 +954,7 @@ async function loadSettingsValues() {
     $("#prime-end").value = s.prime_end || "22:00";
     $("#analysis-text").value = s.analysis_guide || "";
     $("#template-text").value = s.template_guide || "";
+    $("#va-themes-text").value = (s.va_themes || []).join("\n");
   } catch (e) { toast(e.message, true); }
 }
 
@@ -987,6 +993,19 @@ async function initSettings() {
   $("#template-save").addEventListener("click", () => saveGuide("template", "#template-text", "#template-status"));
   $("#analysis-upload").addEventListener("click", () => uploadGuide("analysis", "#analysis-file"));
   $("#template-upload").addEventListener("click", () => uploadGuide("template", "#template-file"));
+
+  $("#va-themes-save").addEventListener("click", async () => {
+    const themes = $("#va-themes-text").value.split("\n").map((t) => t.trim()).filter(Boolean);
+    try {
+      const r = await api("/api/settings/va-themes", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ themes }),
+      });
+      $("#va-themes-text").value = (r.va_themes || []).join("\n");
+      $("#va-themes-status").className = "status ok";
+      $("#va-themes-status").textContent = `Saved ${r.va_themes.length} V/A theme(s). New uploads use these.`;
+    } catch (e) { toast(e.message, true); }
+  });
 }
 
 // Load stable colour maps, then init default tab.

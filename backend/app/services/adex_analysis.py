@@ -186,6 +186,44 @@ def category_channels(db: Session, product_groups=None, limit=10) -> list[dict]:
     return [{"channel": c or "Unknown", "spend": round(s or 0, 2), "advertisers": n} for c, s, n in db.execute(stmt).all()]
 
 
+def category_channels_com_va(db: Session, product_groups=None, limit=12) -> list[dict]:
+    """Per-channel Com (paid) spend + spots and V/A (bonus) spots + seconds for
+    the selected category, ordered by Com spend. Lets the report show clearly
+    how much is paid vs value addition on each channel."""
+    com = {
+        c: (round(s or 0, 2), n) for c, s, n in db.execute(
+            select(AdexRow.channel, func.sum(AdexRow.cost), func.count())
+            .where(_where(COM, _pg_filter(product_groups))).group_by(AdexRow.channel)
+        ).all()
+    }
+    va = {
+        c: (n, round(s or 0, 1)) for c, n, s in db.execute(
+            select(AdexRow.channel, func.count(), func.sum(AdexRow.dur))
+            .where(_where(AdexRow.va_com == "V/A", _pg_filter(product_groups))).group_by(AdexRow.channel)
+        ).all()
+    }
+    out = [
+        {
+            "channel": c or "Unknown",
+            "medium": None,
+            "com_spend": com.get(c, (0.0, 0))[0],
+            "com_spots": com.get(c, (0.0, 0))[1],
+            "va_spots": va.get(c, (0, 0.0))[0],
+            "va_seconds": va.get(c, (0, 0.0))[1],
+        }
+        for c in (set(com) | set(va))
+    ]
+    # attach medium for context
+    med = dict(db.execute(
+        select(AdexRow.channel, func.max(AdexRow.medium))
+        .where(_pg_filter(product_groups)).group_by(AdexRow.channel)
+    ).all())
+    for r in out:
+        r["medium"] = med.get(r["channel"]) if r["channel"] != "Unknown" else None
+    out.sort(key=lambda x: x["com_spend"], reverse=True)
+    return out[:limit]
+
+
 def benchmark(db: Session, product_groups, advertisers: list[str]) -> list[dict]:
     """Per-advertiser comparison row: total spend, top medium, top channel,
     top programme, and medium mix."""

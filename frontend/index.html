@@ -233,13 +233,24 @@
         <header class="page-head">
           <h1>Settings</h1>
         </header>
-        <div class="card">
-          <h3>Prime-time window</h3>
-          <div class="cbody">
-            <p>Applied consistently across every channel to infer PT/NPT where the sheet doesn't state it.</p>
-            <div class="ask-row" style="padding:0">
-              <input type="time" id="prime-start" /> <span>to</span> <input type="time" id="prime-end" />
-              <button class="btn primary" id="prime-save">Save window</button>
+        <div class="grid-2">
+          <div class="card">
+            <h3>Prime-time window</h3>
+            <div class="cbody">
+              <p>Applied consistently across every channel to infer PT/NPT where the sheet doesn't state it.</p>
+              <div class="ask-row" style="padding:0">
+                <input type="time" id="prime-start" /> <span>to</span> <input type="time" id="prime-end" />
+                <button class="btn primary" id="prime-save">Save window</button>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Value-addition themes <span class="tag">V/A vs Com</span></h3>
+            <div class="cbody">
+              <p>On upload, a media-watch row is marked <strong>V/A</strong> (bonus airtime, excluded from spend) when its <code>Advt_Theme</code> exactly matches one of these. Everything else is <strong>Com</strong> (paid). Medium is read from the Channel prefix automatically. One theme per line.</p>
+              <textarea id="va-themes-text" rows="6" placeholder="Next Card&#10;-BB"></textarea>
+              <button class="btn primary" id="va-themes-save">Save V/A themes</button>
+              <div id="va-themes-status" class="status" style="padding:8px 0 0"></div>
             </div>
           </div>
         </div>

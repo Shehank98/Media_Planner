@@ -20,7 +20,21 @@ def get_settings(db: Session = Depends(get_db)):
         "prime_end": time_to_str(end),
         "analysis_guide": prompt_guide.get_logic(db),
         "template_guide": prompt_guide.get_format(db),
+        "va_themes": settings_store.get_va_themes(db),
     }
+
+
+@router.put("/va-themes")
+def set_va_themes(body: dict = Body(...), db: Session = Depends(get_db)):
+    """Update the Advt_Theme values that mark a spot as value addition (V/A).
+
+    Accepts either a list under `themes` or a newline/comma-separated `text`."""
+    themes = body.get("themes")
+    if themes is None:
+        raw = body.get("text", "")
+        themes = [t.strip() for t in str(raw).replace(",", "\n").split("\n") if t.strip()]
+    saved = settings_store.set_va_themes(db, themes)
+    return {"va_themes": saved}
 
 
 @router.put("/prime-window")
