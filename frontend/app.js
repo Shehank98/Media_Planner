@@ -151,11 +151,14 @@ function kpiTile(label, value, sub, accent) {
   return t;
 }
 
-function renderOverviewKpis(boxSel, ov) {
+function renderOverviewKpis(boxSel, ov, sparkValues) {
   const box = $(boxSel);
   box.innerHTML = "";
   const range = ov.date_from ? `${ov.date_from} to ${ov.date_to}` : "no dates";
-  box.append(kpiTile("Total market spend", money(ov.total_spend), range, true));
+  const first = kpiTile("Total market spend", money(ov.total_spend), range, true);
+  const spark = sparklineSVG(sparkValues, "#2DD4BF");
+  if (spark) first.append(spark);
+  box.append(first);
   box.append(kpiTile("Advertisers", num(ov.advertisers, 0), `${num(ov.spots,0)} paid spots`));
   box.append(kpiTile("Channels", num(ov.channels, 0), `${num(ov.categories,0)} categories`));
   if (ov.top_category) box.append(kpiTile("Top category", ov.top_category.name, money(ov.top_category.spend)));
@@ -187,8 +190,8 @@ async function initMarket() {
   const box = $("#mkt-results");
   box.innerHTML = '<div class="card"><span class="spinner"></span> Loading market…</div>';
   try {
-    const ov = await api("/api/market/overview");
-    renderOverviewKpis("#mkt-kpis", ov);
+    const [ov, mt] = await Promise.all([api("/api/market/overview"), api("/api/market/monthly-total")]);
+    renderOverviewKpis("#mkt-kpis", ov, mt.values);
     box.innerHTML = "";
 
     box.append(chartCard("Monthly spend by medium", "/api/market/charts/trend.png"));
@@ -266,14 +269,15 @@ async function runTab1() {
   const pgQuery = qs({ product_groups: pgs });
 
   try {
-    const [ov, ms, top, sos, va] = await Promise.all([
+    const [ov, ms, top, sos, va, mt] = await Promise.all([
       api("/api/market/overview?" + pgQuery),
       api("/api/tab1/medium-split?" + query),
       api("/api/tab1/top-advertisers?" + pgQuery),
       api("/api/tab1/sos?" + qs({ product_groups: pgs, medium: "TV" })),
       api("/api/tab1/value-addition?" + query),
+      api("/api/market/monthly-total?" + pgQuery),
     ]);
-    renderOverviewKpis("#t1-kpis", ov);
+    renderOverviewKpis("#t1-kpis", ov, mt.values);
     box.innerHTML = "";
 
     box.append(chartCard("Spend trend", "/api/tab1/charts/trend.png?" + query));
@@ -380,6 +384,7 @@ async function runTab2() {
   try {
     const rows = await api("/api/tab2/best-programmes?" + qs({ channel, slot, metric, limit: 40 }));
     box.innerHTML = "";
+    box.append(efficiencyScatter(rows));
     box.append(chartCard("CPRP by Programme", "/api/tab2/cprp-chart.png?" + qs({ channel, slot, limit: 15 })));
 
     const card = el("div", { class: "card" });
@@ -534,6 +539,82 @@ function chartFragment(title, src) {
 function chartCard(title, src) {
   const card = el("div", { class: "card" });
   card.append(chartFragment(title, src));
+  return card;
+}
+
+// Inline sparkline SVG (84x26 viewBox) for KPI cards.
+function sparklineSVG(values, color) {
+  const vals = (values || []).filter((v) => v != null);
+  if (vals.length < 2) return null;
+  const min = Math.min(...vals), max = Math.max(...vals), span = max - min || 1;
+  const n = vals.length;
+  const pts = vals.map((v, i) => `${(i / (n - 1)) * 84},${26 - ((v - min) / span) * 24 - 1}`).join(" ");
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 84 26");
+  svg.setAttribute("preserveAspectRatio", "none");
+  svg.setAttribute("class", "kpi-spark");
+  const pl = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+  pl.setAttribute("points", pts);
+  pl.setAttribute("fill", "none");
+  pl.setAttribute("stroke", color || "#2DD4BF");
+  pl.setAttribute("stroke-width", "1.6");
+  pl.setAttribute("stroke-linecap", "round");
+  pl.setAttribute("stroke-linejoin", "round");
+  svg.append(pl);
+  return svg;
+}
+
+// Interactive SVG scatter: efficiency frontier (TVR vs CPRP), hover tooltips.
+function efficiencyScatter(points) {
+  // points: [{programme, channel, cprp, tvr, reach}]
+  const pts = points.filter((p) => p.cprp != null && p.avg_tvr != null);
+  const card = el("div", { class: "card" });
+  card.append(el("div", { class: "section-title" }, "Efficiency frontier — TVR vs CPRP"));
+  if (!pts.length) {
+    card.append(el("div", { class: "scatter-note" }, "No CPRP data yet. Load TVR data and rate cards to plot the frontier."));
+    return card;
+  }
+  const W = 760, H = 320, m = { l: 54, r: 20, t: 16, b: 42 };
+  const xs = pts.map((p) => p.cprp), ys = pts.map((p) => p.avg_tvr), rs = pts.map((p) => p.avg_reach || 0);
+  const xMax = Math.max(...xs) * 1.08, yMax = Math.max(...ys) * 1.12, rMax = Math.max(...rs) || 1;
+  const px = (v) => m.l + (v / xMax) * (W - m.l - m.r);
+  const py = (v) => H - m.b - (v / yMax) * (H - m.t - m.b);
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const mk = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+  const txt = (attrs, s) => { const e = mk("text", attrs); e.textContent = s; return e; };
+  // grid + axes
+  for (let i = 0; i <= 4; i++) {
+    const gy = m.t + (i / 4) * (H - m.t - m.b);
+    svg.append(mk("line", { x1: m.l, x2: W - m.r, y1: gy, y2: gy, stroke: "#212A35", "stroke-width": 1 }));
+    const val = yMax * (1 - i / 4);
+    svg.append(txt({ x: m.l - 8, y: gy + 3, "text-anchor": "end", fill: "#556170", "font-size": 10, "font-family": "IBM Plex Mono" }, val.toFixed(1)));
+  }
+  // axis labels
+  svg.append(txt({ x: (m.l + W - m.r) / 2, y: H - 8, "text-anchor": "middle", fill: "#78838F", "font-size": 11 }, "CPRP (cost per rating point) — lower is better"));
+  svg.append(txt({ x: 14, y: (m.t + H - m.b) / 2, "text-anchor": "middle", fill: "#78838F", "font-size": 11, transform: `rotate(-90 14 ${(m.t + H - m.b) / 2})` }, "Avg TVR"));
+  // "best" zone hint (low CPRP, high TVR = top-left)
+  svg.append(txt({ x: m.l + 6, y: m.t + 14, fill: "#45C285", "font-size": 10.5, "font-family": "IBM Plex Mono", opacity: .8 }, "best value"));
+  // points
+  const tip = el("div", { class: "scatter-tip" });
+  pts.forEach((p) => {
+    const r = 5 + (rMax ? (p.avg_reach || 0) / rMax : 0) * 9;
+    const c = mk("circle", { class: "pt", cx: px(p.cprp), cy: py(p.avg_tvr), r, fill: colorFor(p.channel), "fill-opacity": .82, stroke: colorFor(p.channel), "stroke-opacity": .4 });
+    c.addEventListener("mousemove", (e) => {
+      tip.innerHTML = `<b>${p.programme}</b><br>${p.channel}<br>TVR <span class="mono">${num(p.avg_tvr, 2)}</span> , CPRP <span class="mono">${num(p.cprp)}</span><br>Reach <span class="mono">${money(p.avg_reach)}</span>`;
+      const rect = card.getBoundingClientRect();
+      tip.style.left = (e.clientX - rect.left + 14) + "px";
+      tip.style.top = (e.clientY - rect.top + 12) + "px";
+      tip.style.opacity = "1";
+    });
+    c.addEventListener("mouseleave", () => (tip.style.opacity = "0"));
+    svg.append(c);
+  });
+  const wrap = el("div", { class: "scatter chart-wrap" });
+  wrap.append(svg, tip);
+  card.append(wrap);
+  card.append(el("div", { class: "scatter-note" }, "Bubble size = reach. Top-left programmes deliver the most rating points for the lowest cost."));
   return card;
 }
 // Columns whose first-column values are names that get a colour swatch.

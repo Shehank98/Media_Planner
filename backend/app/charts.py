@@ -47,6 +47,15 @@ plt.rcParams.update({
 _DARK_HEAT = LinearSegmentedColormap.from_list("mp_dark", ["#161C26", "#1D5C57", "#2DD4BF"])
 
 
+def _grad_cmap(hexcolor):
+    """Transparent -> colour vertical gradient for area fills under a line."""
+    from matplotlib.colors import to_rgb
+    r, g, b = to_rgb(hexcolor)
+    return LinearSegmentedColormap.from_list(
+        "mp_area", [(r, g, b, 0.0), (r, g, b, 0.35)]
+    )
+
+
 def _th(dark: bool) -> dict:
     return THEME["dark" if dark else "light"]
 
@@ -174,9 +183,11 @@ def stacked_bar(labels, series, title="", ylabel="", money=False, color_kind="me
     return _finish(fig, th)
 
 
-def line_chart(x, series, title="", xlabel="", ylabel="", money=False, color_kind="name", colors=None, dark=True) -> bytes:
+def line_chart(x, series, title="", xlabel="", ylabel="", money=False, color_kind="name", colors=None, dark=True, area=False) -> bytes:
     if not x or not series:
         return _empty(title, dark)
+    import numpy as np
+
     fig, ax, th = _new((9, 4.5), dark)
     names = list(series.keys())
     if colors is not None:
@@ -185,8 +196,18 @@ def line_chart(x, series, title="", xlabel="", ylabel="", money=False, color_kin
         line_colors = [ACCENT]
     else:
         line_colors = _colors(names, color_kind)
+    pos = np.arange(len(x))
     for i, (name, ys) in enumerate(series.items()):
         ax.plot(x, ys, marker="o", markersize=4, linewidth=2.4, color=line_colors[i], label=name)
+        if area and len(series) == 1:
+            # gradient fill under the line (matches the terminal design)
+            ys_arr = np.array([v or 0 for v in ys], dtype=float)
+            ymax = ys_arr.max() or 1
+            grad = np.linspace(0, 1, 256).reshape(-1, 1)
+            im = ax.imshow(grad, extent=[pos.min(), pos.max(), 0, ymax], origin="lower",
+                           aspect="auto", cmap=_grad_cmap(line_colors[i]), zorder=0)
+            poly = ax.fill_between(pos, 0, ys_arr, color="none")
+            im.set_clip_path(poly.get_paths()[0], transform=ax.transData)
     _grid(ax, th, "y")
     if money:
         ax.yaxis.set_major_formatter(FuncFormatter(_thousands))

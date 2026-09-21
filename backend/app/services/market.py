@@ -89,6 +89,17 @@ def top_categories(db: Session, limit=10) -> list[dict]:
     ]
 
 
+def monthly_total(db: Session, product_groups=None) -> dict:
+    """Total Com spend per month (for KPI sparklines)."""
+    month = _month_expr()
+    rows = db.execute(
+        select(month, func.sum(AdexRow.cost))
+        .where(_where(COM, AdexRow.spot_date.isnot(None), _pg_filter(product_groups)))
+        .group_by(month).order_by(month)
+    ).all()
+    return {"labels": [r[0] for r in rows], "values": [round(r[1] or 0, 2) for r in rows]}
+
+
 def market_trend(db: Session, product_groups=None) -> dict:
     """Total market spend by month, split by medium (for a stacked view)."""
     month = _month_expr()

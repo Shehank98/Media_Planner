@@ -124,8 +124,19 @@ a { color: var(--accent); text-decoration: none; }
 
 /* ---- KPI cards ---- */
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); gap: 14px; margin-bottom: 18px; }
-.kpi { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 15px 17px; }
+.kpi { position: relative; overflow: hidden; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 15px 17px; }
 .kpi:hover { border-color: var(--hover); }
+.kpi-spark { position: absolute; right: 14px; top: 14px; width: 74px; height: 24px; opacity: .85; }
+
+/* Interactive scatter */
+.scatter { position: relative; }
+.scatter svg { width: 100%; height: auto; display: block; }
+.scatter .pt { cursor: pointer; transition: r .1s; }
+.scatter .pt:hover { stroke: #fff; stroke-width: 1.5; }
+.scatter-tip { position: absolute; pointer-events: none; background: #12171F; border: 1px solid var(--line-2); border-radius: 8px; padding: 8px 11px; font-size: 12px; color: var(--sec); box-shadow: 0 12px 30px rgba(0,0,0,.55); z-index: 5; white-space: nowrap; opacity: 0; transition: opacity .1s; }
+.scatter-tip b { color: var(--ink); }
+.scatter-tip .mono { font-family: var(--mono); color: var(--val); }
+.scatter-note { padding: 0 16px 14px; font-size: 12px; color: var(--muted); }
 .kpi-label { font-size: 11px; letter-spacing: .03em; color: var(--muted); font-weight: 500; text-transform: uppercase; }
 .kpi-value { font: 600 24px/1.1 var(--mono); color: var(--ink); margin-top: 7px; letter-spacing: -0.01em; }
 .kpi-sub { font-size: 11.5px; color: var(--dim); margin-top: 5px; }

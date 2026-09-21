@@ -43,6 +43,11 @@ def sov_trend(product_groups: list[str] | None = Query(None), top_n: int = 5, db
     return market.sov_trend(db, product_groups, top_n)
 
 
+@router.get("/monthly-total")
+def monthly_total(product_groups: list[str] | None = Query(None), db: Session = Depends(get_db)):
+    return market.monthly_total(db, product_groups)
+
+
 # --- charts ---------------------------------------------------------------
 @router.get("/charts/top-categories.png")
 def chart_top_categories(limit: int = 10, db: Session = Depends(get_db)):

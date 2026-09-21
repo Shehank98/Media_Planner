@@ -95,7 +95,7 @@ def chart_medium(product_groups: list[str] | None = Query(None), advertisers: li
 @router.get("/charts/trend.png")
 def chart_trend(product_groups: list[str] | None = Query(None), advertisers: list[str] | None = Query(None), by: str = "month", db: Session = Depends(get_db)):
     data = adex_analysis.spend_trend(db, product_groups, advertisers, by)
-    png = charts.line_chart(data["labels"], data["series"], title="", money=True)
+    png = charts.line_chart(data["labels"], data["series"], title="", money=True, area=True)
     return Response(png, media_type="image/png")
 
 

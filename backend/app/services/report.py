@@ -93,7 +93,7 @@ def build_charts(data: dict) -> dict[str, bytes]:
         return [cmap.get(n, palette.OTHERS) for n in names]
     tr = data["trend"]
     if tr["labels"]:
-        out["trend"] = line_chart(tr["labels"], tr["series"], title="Total category spend by month", money=True)
+        out["trend"] = line_chart(tr["labels"], tr["series"], title="Total category spend by month", money=True, area=True)
     ms = data["medium_split"]
     if ms:
         out["medium"] = pie_chart([m["medium"] for m in ms], [m["spend"] for m in ms],

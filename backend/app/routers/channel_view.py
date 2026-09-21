@@ -73,6 +73,6 @@ def chart_programmes(channel: str, advertiser: str | None = None, db: Session = 
 def chart_advertiser_trend(channel: str, advertiser: str, db: Session = Depends(get_db)):
     data = adex_analysis.advertiser_channel_trend(db, channel, advertiser)
     amap = colors_svc.advertiser_colors(db)
-    png = charts.line_chart(data["labels"], data["series"], title="", money=True,
+    png = charts.line_chart(data["labels"], data["series"], title="", money=True, area=True,
                             colors=[amap.get(advertiser, charts.OTHERS)])
     return Response(png, media_type="image/png")
