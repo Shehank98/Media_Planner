@@ -927,6 +927,15 @@ async function loadBatches(url, boxSel, kind) {
     const batches = await api(url);
     box.innerHTML = "";
     if (!batches.length) { box.innerHTML = '<p class="muted">None yet.</p>'; return; }
+    if (batches.length > 1) {
+      const bar = el("div", { class: "ask-row", style: "justify-content:flex-end;padding:0 0 6px" });
+      bar.append(el("button", { class: "btn small danger", onclick: async () => {
+        if (!confirm(`Clear ALL ${batches.length} datasets? This wipes every row and frees the memory. This cannot be undone.`)) return;
+        const r = await api(url, { method: "DELETE" });
+        toast(`Cleared ${r.rows ?? 0} rows`); loadBatches(url, boxSel, kind);
+      } }, "Clear all"));
+      box.append(bar);
+    }
     batches.forEach((b) => box.append(batchRow(b, `${b.row_count} rows`, async () => {
       if (!confirm("Delete this batch?")) return;
       await api(`${url}/${b.batch_id}`, { method: "DELETE" });

@@ -71,6 +71,12 @@ def batches(db: Session = Depends(get_db)):
     return ingest.list_batches(db, "tvr")
 
 
+@router.delete("/batches")
+def wipe_batches(db: Session = Depends(get_db)):
+    """Wipe every TVR dataset (all rows, batches, jobs, staged files)."""
+    return ingest.wipe_kind(db, "tvr")
+
+
 @router.delete("/batches/{batch_id}")
 def delete_batch(batch_id: str, db: Session = Depends(get_db)):
     n = ingest.delete_batch(db, "tvr", batch_id)

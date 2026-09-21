@@ -101,7 +101,15 @@ def job_review(job_id: str, db: Session = Depends(get_db)):
     staged = jobs.load_staged(job_id)
     if not staged:
         raise HTTPException(410, "staged payload no longer available")
-    return {"status": job.status, "kind": staged["kind"], "summary": staged["summary"], "payload": staged["payload"]}
+    # Return only a small preview of the parsed rows. The full payload stays on
+    # disk and is read again at confirm time, so shipping every row here would
+    # just balloon memory and the response for large uploads.
+    payload = staged["payload"]
+    preview = dict(payload)
+    if isinstance(payload.get("rows"), list):
+        preview["rows"] = payload["rows"][:50]
+        preview["rows_total"] = len(payload["rows"])
+    return {"status": job.status, "kind": staged["kind"], "summary": staged["summary"], "payload": preview}
 
 
 @router.post("/api/jobs/{job_id}/confirm")
