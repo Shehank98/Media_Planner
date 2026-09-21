@@ -8,12 +8,30 @@ only as a 'bonus value received' metric for the narrative.
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
+
 from sqlalchemy import Integer, and_, cast, distinct, extract, func, select
 from sqlalchemy.orm import Session
 
 from ..models import AdexRow
 
 COM = AdexRow.va_com == "Com"
+
+# Optional year scope. When set (via `year_scope`), every query built through
+# `_where` is transparently restricted to that calendar year, so the whole
+# analysis/report pipeline can be re-run for a single year without threading a
+# `year` argument through dozens of functions.
+_YEAR_SCOPE: contextvars.ContextVar[int | None] = contextvars.ContextVar("adex_year_scope", default=None)
+
+
+@contextlib.contextmanager
+def year_scope(year: int | None):
+    token = _YEAR_SCOPE.set(year)
+    try:
+        yield
+    finally:
+        _YEAR_SCOPE.reset(token)
 
 
 def _pg_filter(product_groups: list[str] | None):
@@ -29,7 +47,9 @@ def _adv_filter(advertisers: list[str] | None):
 
 
 def _where(*conds):
-    return and_(*[c for c in conds if c is not None])
+    year = _YEAR_SCOPE.get()
+    extra = cast(extract("year", AdexRow.spot_date), Integer) == year if year is not None else None
+    return and_(*[c for c in (*conds, extra) if c is not None])
 
 
 # --------------------------------------------------------------------------

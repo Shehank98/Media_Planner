@@ -76,10 +76,10 @@ def overview(db: Session, product_groups=None) -> dict:
 
 
 def top_categories(db: Session, limit=10) -> list[dict]:
-    total = db.execute(select(func.sum(AdexRow.cost)).where(COM)).scalar() or 0.0
+    total = db.execute(select(func.sum(AdexRow.cost)).where(_where(COM))).scalar() or 0.0
     rows = db.execute(
         select(AdexRow.product_group, func.sum(AdexRow.cost), func.count(distinct(AdexRow.advertiser)))
-        .where(COM).group_by(AdexRow.product_group)
+        .where(_where(COM)).group_by(AdexRow.product_group)
         .order_by(func.sum(AdexRow.cost).desc()).limit(limit)
     ).all()
     return [

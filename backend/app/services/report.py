@@ -23,7 +23,15 @@ from . import basket, colors, market
 # --------------------------------------------------------------------------
 # Data
 # --------------------------------------------------------------------------
-def gather(db: Session, product_groups: list[str], lead_advertiser: str | None, include_research: bool = False) -> dict:
+def gather(db: Session, product_groups: list[str], lead_advertiser: str | None,
+           include_research: bool = False, year: int | None = None) -> dict:
+    # A year scope restricts every query below to that calendar year, so the
+    # same gathering pass produces a full report for a single year.
+    with ax.year_scope(year):
+        return _gather(db, product_groups, lead_advertiser, include_research, year)
+
+
+def _gather(db: Session, product_groups, lead_advertiser, include_research, year) -> dict:
     ov = market.overview(db, product_groups)
     top_adv = ax.top_advertisers(db, product_groups, limit=12)
     total = sum(a["spend"] for a in top_adv) or ov["total_spend"] or 0.0
@@ -34,6 +42,7 @@ def gather(db: Session, product_groups: list[str], lead_advertiser: str | None, 
     data = {
         "product_groups": product_groups,
         "lead_advertiser": lead_advertiser,
+        "year": year,
         "generated_on": dt.date.today().isoformat(),
         "overview": ov,
         "trend": ax.spend_trend(db, product_groups, by="month"),
@@ -51,7 +60,8 @@ def gather(db: Session, product_groups: list[str], lead_advertiser: str | None, 
         "channel_com_va": ax.category_channels_com_va(db, product_groups, limit=12),
         "channel_detail": ax.top_channel_advertiser_detail(db, product_groups, top_channels=5, top_adv=15),
         "advertiser_pages": ax.advertiser_channel_breakdown(db, product_groups, top_adv=20, channels_per=12),
-        "yearly_analysis": ax.yearly_analysis(db, product_groups, top_adv=12),
+        # Only the overall (unscoped) report carries the year-by-year section.
+        "yearly_analysis": [] if year is not None else ax.yearly_analysis(db, product_groups, top_adv=12),
     }
 
     if lead_advertiser:
@@ -64,17 +74,22 @@ def gather(db: Session, product_groups: list[str], lead_advertiser: str | None, 
             "value_addition": ax.value_addition(db, product_groups, [lead_advertiser]),
         }
 
-    # Recommended basket (only if TVR data exists)
-    progs = [p for p in basket.best_programmes(db, limit=40) if p.get("cprp") is not None]
-    progs.sort(key=lambda x: x["cprp"])
-    data["recommended_basket"] = progs[:8]
+    # Recommended basket (only if TVR data exists). CPRP is not year-scoped
+    # (it comes from TVR + rate cards), so only the overall report carries it.
+    if year is None:
+        progs = [p for p in basket.best_programmes(db, limit=40) if p.get("cprp") is not None]
+        progs.sort(key=lambda x: x["cprp"])
+        data["recommended_basket"] = progs[:8]
+    else:
+        data["recommended_basket"] = []
 
     # Stable colour maps so report charts match the app and each other.
     data["_amap"] = colors.advertiser_colors(db)
     data["_cmap"] = colors.channel_colors(db)
 
-    # Optional web market research (Gemini + Google Search), grounded in our data.
-    if include_research:
+    # Optional web market research (Gemini + Google Search), grounded in our
+    # data. Never fetched for a single-year page.
+    if include_research and year is None:
         try:
             internal = {
                 "category": product_groups,
@@ -153,12 +168,6 @@ def build_charts(data: dict) -> dict[str, bytes]:
             names = [c["channel"] for c in dd["channels"]]
             out["dd_channels"] = bar_chart(names, [c["spend"] for c in dd["channels"]],
                                                   title=f"{dd['advertiser']} top channels", money=True, colors=ccols(names))
-    # Per-year monthly Com-spend charts for the year-by-year section.
-    for ya in data.get("yearly_analysis", []):
-        mon = ya["monthly"]
-        if mon["labels"]:
-            out[f"ym_{ya['year']}"] = bar_chart(mon["month_names"] or mon["labels"], mon["spend"],
-                                                title=f"{ya['year']} monthly spend", money=True, single_color=True)
     rb = data["recommended_basket"]
     if rb:
         out["cprp"] = bar_chart([f"{p['programme']} ({p['channel']})" for p in rb],
@@ -366,50 +375,86 @@ def _advertiser_pages_html(pages: list[dict]) -> str:
     return "".join(out)
 
 
-def _yearly_html(yearly: list[dict], pngs: dict) -> str:
-    """Per-year full breakdown: totals + YoY, monthly spend, medium split,
-    advertiser ranking, category split and V/A."""
-    if not yearly:
-        return ""
-    out = []
-    for y in yearly:
-        yoy = ""
-        if y["yoy_pct"] is not None:
-            arrow = "▲" if y["yoy_pct"] >= 0 else "▼"
-            cls = "rp-up" if y["yoy_pct"] >= 0 else "rp-down"
-            yoy = f' <span class="rp-yoy {cls}">{arrow} {abs(y["yoy_pct"])}% vs prior year</span>'
-        chips = (f'<span class="rp-chip">Total Com {_money(y["total_spend"])}</span>'
-                 f'<span class="rp-chip">{y["advertisers_count"]} advertisers</span>'
-                 f'<span class="rp-chip rp-chip-va">V/A {y["va_spots"]:,} spots · {y["va_seconds"]:,.0f}s</span>')
+def _year_report_html(db: Session, product_groups: list[str], year: int, summary: dict) -> str:
+    """A full report for a single year: the same sections as the overall report
+    (KPIs, category overview, advertiser ranking + comparison, channel analysis,
+    per-advertiser detail) plus month-by-month spend, using only that year's
+    data. `summary` is the compact yearly_analysis row (for YoY + monthly)."""
+    data = gather(db, product_groups, None, include_research=False, year=year)
+    pngs = build_charts(data)
+    ov = data["overview"]
+    total = ov["total_spend"] or 0
 
-        mon = y["monthly"]
-        mon_tbl = _table(["Month", "Com spend"],
-                         [[nm, _money(sp)] for nm, sp in zip(mon["month_names"] or mon["labels"], mon["spend"])],
-                         [False, True]) if mon["labels"] else ""
-        med_tbl = _table(["Medium", "Com spend", "Share"],
-                         [[m["medium"], _money(m["spend"]), f"{m['share_pct']}%"] for m in y["medium_split"]],
-                         [False, True, True])
-        adv_tbl = _table(["Advertiser", "Com spend", "SOS", "Com spots"],
-                         [[a["advertiser"], _money(a["spend"]), f"{a['share_pct']}%", a["spots"]] for a in y["advertisers"]],
-                         [False, True, True, True])
-        cat_block = ""
-        if len(y["category_split"]) > 1:
-            cat_block = ("<h4>Category split</h4>" + _table(["Category", "Com spend", "Share"],
-                         [[c["category"], _money(c["spend"]), f"{c['share_pct']}%"] for c in y["category_split"]],
-                         [False, True, True]))
+    yoy = ""
+    if summary.get("yoy_pct") is not None:
+        up = summary["yoy_pct"] >= 0
+        yoy = (f' <span class="rp-yoy {"rp-up" if up else "rp-down"}">'
+               f'{"▲" if up else "▼"} {abs(summary["yoy_pct"])}% vs prior year</span>')
 
-        mon_img = _img(pngs.get(f"ym_{y['year']}"))
-        out.append(
-            f'<div class="rp-year">'
-            f'<h3 class="rp-advh">{y["year"]}{yoy}</h3>'
-            f'<div class="rp-chips">{chips}</div>'
-            f'<h4>Monthly spend</h4>{mon_img}{mon_tbl}'
-            f'<div class="rp-grid"><div><h4>Medium split</h4>{med_tbl}</div>'
-            f'<div><h4>Advertiser ranking</h4>{adv_tbl}</div></div>'
-            f'{cat_block}'
-            '</div>'
-        )
-    return "".join(out)
+    kpis = [("Total spend", _money(total)), ("Advertisers", f"{ov['advertisers']:,}"),
+            ("Channels", f"{ov['channels']:,}"),
+            ("Date range", f"{ov['date_from'] or 'n/a'} to {ov['date_to'] or 'n/a'}")]
+    if ov["top_advertiser"]:
+        kpis.append(("Leader", ov["top_advertiser"]["name"]))
+    kpi_html = "".join(f'<div class="rp-kpi"><span>{html.escape(l)}</span>'
+                       f'<strong>{html.escape(str(v))}</strong></div>' for l, v in kpis)
+
+    # Monthly spend for the year (the trend chart above already plots it, so
+    # here we give the exact figures as a table).
+    mon = summary["monthly"]
+    mon_tbl = _table(["Month", "Com spend"],
+                     [[nm, _money(sp)] for nm, sp in zip(mon["month_names"] or mon["labels"], mon["spend"])],
+                     [False, True]) if mon["labels"] else ""
+
+    # Category split (only meaningful with several categories)
+    cs = data["category_split"]
+    cat_block = ""
+    if cs and len(cs) > 1:
+        cat_block = ("<h4>Category breakdown</h4>" + _table(["Category", "Spend", "Advertisers", "Share"],
+                     [[c["category"], _money(c["spend"]), c["advertisers"], f"{c['share_pct']}%"] for c in cs],
+                     [False, True, True, True]))
+
+    rank_tbl = _table(["Advertiser", "Total spend", "Share"],
+                      [[a["advertiser"], _money(a["spend"]), f"{a['share_pct']}%"] for a in data["top_advertisers"]],
+                      [False, True, True])
+    cmp = data["comparison"]
+    cmp_block = ""
+    if cmp:
+        cmp_block = ("<h4>Advertiser comparison</h4>" + _table(
+            ["Advertiser", "Com spend", "SOS", "TV", "Radio", "Press", "Com spots", "V/A spots", "V/A secs"],
+            [[c["advertiser"], _money(c["spend"]), f"{c['share_pct']}%", _money(c["tv"]), _money(c["radio"]),
+              _money(c["press"]), c["com_spots"], c["va_spots"], f"{c['va_seconds']:,.0f}"] for c in cmp],
+            [False, True, True, True, True, True, True, True, True]))
+
+    ch_cv = data["channel_com_va"]
+    ch_cv_block = ""
+    if ch_cv:
+        ch_cv_block = ("<h4>Paid (Com) vs value addition (V/A) by channel</h4>" + _table(
+            ["Channel", "Medium", "Com spend", "Com spots", "V/A spots", "V/A secs"],
+            [[c["channel"], c["medium"] or "n/a", _money(c["com_spend"]), c["com_spots"],
+              c["va_spots"], f"{c['va_seconds']:,.0f}"] for c in ch_cv], [False, False, True, True, True, True]))
+
+    bm = data["benchmark"]
+    bm_block = ""
+    if bm:
+        bm_block = ("<h4>Competitor benchmark</h4>" + _table(
+            ["Advertiser", "Total spend", "Top medium", "Top channel", "Top programme"],
+            [[b["advertiser"], _money(b["spend"]), b["top_medium"] or "n/a", b["top_channel"] or "n/a",
+              b["top_programme"] or "n/a"] for b in bm], [False, True, False, False, False]))
+
+    return f"""<div class="rp-yearpage">
+  <div class="rp-yearbanner"><span class="rp-yearnum">{year}</span>{yoy}</div>
+  <div class="rp-kpis">{kpi_html}</div>
+  <h3>Category overview</h3>
+  <div class="rp-grid">{_img(pngs.get('trend'))}{_img(pngs.get('medium'))}</div>
+  {cat_block}
+  <h3>Monthly spend</h3>{mon_tbl}
+  <h3>Advertiser ranking</h3>{_img(pngs.get('ranking'))}{rank_tbl}{cmp_block}
+  <h3>Channel analysis</h3>{_img(pngs.get('channels'))}{ch_cv_block}
+  {_channel_detail_html(data['channel_detail'])}
+  {_advertiser_pages_html(data['advertiser_pages'])}
+  {_img(pngs.get('sov'))}{bm_block}
+</div>"""
 
 
 def _channel_detail_html(detail: dict) -> str:
@@ -569,11 +614,13 @@ def build_html(db: Session, product_groups: list[str], lead_advertiser: str | No
 
     yearly_sec = ""
     if yearly:
-        yearly_sec = (f'<section class="rp-sec"><h2>{yearly_n}. Year-by-year analysis</h2>'
-                      '<p class="rp-narr rp-muted">The same category and advertiser breakdown as above, split by '
-                      'year with month-by-month spend, so you can see how the category and each advertiser moved '
-                      'over time. All figures are Com (paid); V/A bonus is reported separately.</p>'
-                      f'{_yearly_html(yearly, pngs)}</section>')
+        year_pages = "".join(_year_report_html(db, product_groups, y["year"], y) for y in yearly)
+        yearly_sec = (f'<section class="rp-sec"><h2>{yearly_n}. Year-by-year full analysis</h2>'
+                      '<p class="rp-narr rp-muted">A complete report for each year in the data, using only that '
+                      "year's spots: the same category overview, advertiser ranking, channel analysis and "
+                      'per-advertiser detail as above, plus month-by-month spend. All figures are Com (paid); '
+                      'V/A bonus is reported separately.</p>'
+                      f'{year_pages}</section>')
 
     adv_sec = ""
     if has_adv:
@@ -660,9 +707,10 @@ def build_pdf(db: Session, product_groups: list[str], lead_advertiser: str | Non
         if text:
             story.append(Paragraph(html.escape(text), body))
 
-    def chart(key, w=15):
-        if key in pngs:
-            story.append(Image(io.BytesIO(pngs[key]), width=w * cm, height=w * 0.52 * cm, kind="proportional"))
+    def chart(key, w=15, src=None):
+        src = pngs if src is None else src
+        if key in src:
+            story.append(Image(io.BytesIO(src[key]), width=w * cm, height=w * 0.52 * cm, kind="proportional"))
             story.append(Spacer(1, 0.25 * cm))
 
     def table(headers, rows, numeric=None):
@@ -793,28 +841,50 @@ def build_pdf(db: Session, product_groups: list[str], lead_advertiser: str | Non
                 story.append(Paragraph("Sources: " + links, meta))
 
     if yearly:
-        story.append(PageBreak())
-        story.append(Paragraph(f"{yearly_no}. Year-by-Year Analysis", h2))
-        para("The same category and advertiser breakdown as above, split by year with month-by-month spend. "
-             "All figures are Com (paid); V/A bonus is reported separately.")
-        for i, y in enumerate(yearly):
-            if i:
-                story.append(Spacer(1, 0.3 * cm))
-            yoy = f"  (YoY {'+' if (y['yoy_pct'] or 0) >= 0 else ''}{y['yoy_pct']}%)" if y["yoy_pct"] is not None else ""
-            story.append(Paragraph(f"{y['year']} - Total Com {_money(y['total_spend'])}{yoy}", h3))
-            story.append(Paragraph(f"{y['advertisers_count']} advertisers &nbsp;|&nbsp; "
-                                   f"V/A {y['va_spots']:,} spots, {y['va_seconds']:,.0f}s", meta))
-            chart(f"ym_{y['year']}", 15)
-            mon = y["monthly"]
+        year_title = ParagraphStyle("yt", parent=title, fontSize=30, spaceAfter=2)
+        for i, ysum in enumerate(yearly):
+            yr = ysum["year"]
+            ydata = gather(db, product_groups, None, include_research=False, year=yr)
+            ypngs = build_charts(ydata)
+            yov = ydata["overview"]
+            story.append(PageBreak())
+            if i == 0:
+                story.append(Paragraph(f"{yearly_no}. Year-by-Year Full Analysis", h2))
+                para("A complete report for each year using only that year's spots.")
+            yoy = f"  (YoY {'+' if (ysum['yoy_pct'] or 0) >= 0 else ''}{ysum['yoy_pct']}%)" if ysum["yoy_pct"] is not None else ""
+            story.append(Paragraph(f"{yr}{yoy}", year_title))
+            story.append(Paragraph(
+                f"Total Com {_money(yov['total_spend'])} &nbsp;|&nbsp; {yov['advertisers']} advertisers &nbsp;|&nbsp; "
+                f"{yov['channels']} channels &nbsp;|&nbsp; {yov['date_from'] or 'n/a'} to {yov['date_to'] or 'n/a'}", meta))
+
+            story.append(Paragraph("Category Overview", h3)); chart("trend", src=ypngs); chart("medium", 11, src=ypngs)
+            cs = ydata["category_split"]
+            if cs and len(cs) > 1:
+                table(["Category", "Spend", "Advertisers", "Share"],
+                      [[c["category"], _money(c["spend"]), c["advertisers"], f"{c['share_pct']}%"] for c in cs])
+            story.append(Paragraph("Monthly Spend", h3))
+            mon = ysum["monthly"]
             table(["Month", "Com Spend"],
                   [[nm, _money(sp)] for nm, sp in zip(mon["month_names"] or mon["labels"], mon["spend"])])
-            table(["Medium", "Com Spend", "Share"],
-                  [[m["medium"], _money(m["spend"]), f"{m['share_pct']}%"] for m in y["medium_split"]])
-            table(["Advertiser", "Com Spend", "SOS", "Com Spots"],
-                  [[a["advertiser"], _money(a["spend"]), f"{a['share_pct']}%", a["spots"]] for a in y["advertisers"]])
-            if len(y["category_split"]) > 1:
-                table(["Category", "Com Spend", "Share"],
-                      [[c["category"], _money(c["spend"]), f"{c['share_pct']}%"] for c in y["category_split"]])
+            story.append(Paragraph("Advertiser Ranking", h3)); chart("ranking", src=ypngs)
+            table(["Advertiser", "Total Spend", "Share"],
+                  [[a["advertiser"], _money(a["spend"]), f"{a['share_pct']}%"] for a in ydata["top_advertisers"]])
+            cmp = ydata["comparison"]
+            if cmp:
+                table(["Advertiser", "Com Spend", "SOS", "TV", "Radio", "Press", "Com Spots", "V/A Spots", "V/A Secs"],
+                      [[c["advertiser"], _money(c["spend"]), f"{c['share_pct']}%", _money(c["tv"]), _money(c["radio"]),
+                        _money(c["press"]), c["com_spots"], c["va_spots"], f"{c['va_seconds']:,.0f}"] for c in cmp])
+            story.append(Paragraph("Channel Analysis", h3)); chart("channels", src=ypngs)
+            ch_cv = ydata["channel_com_va"]
+            if ch_cv:
+                table(["Channel", "Medium", "Com Spend", "Com Spots", "V/A Spots", "V/A Secs"],
+                      [[c["channel"], c["medium"] or "n/a", _money(c["com_spend"]), c["com_spots"],
+                        c["va_spots"], f"{c['va_seconds']:,.0f}"] for c in ch_cv])
+            bm = ydata["benchmark"]
+            if bm:
+                story.append(Paragraph("Competitor Benchmark", h3))
+                table(["Advertiser", "Spend", "Top Medium", "Top Channel"],
+                      [[b["advertiser"], _money(b["spend"]), b["top_medium"] or "n/a", b["top_channel"] or "n/a"] for b in bm])
 
     story.append(Paragraph(f"{appendix_n}. Appendix", h2))
     para("SOS: advertiser share of total category spend. CPRP: 30s-equivalent rate / TVR. "
@@ -850,9 +920,10 @@ def build_docx(db: Session, product_groups: list[str], lead_advertiser: str | No
     doc.add_paragraph(f"Advertisers: {lead_advertiser or 'All advertisers in category'}")
     doc.add_paragraph(f"Data range: {ov['date_from'] or 'n/a'} to {ov['date_to'] or 'n/a'}  |  Generated: {data['generated_on']}")
 
-    def chart(key, w=6.2):
-        if key in pngs:
-            doc.add_picture(io.BytesIO(pngs[key]), width=Inches(w))
+    def chart(key, w=6.2, src=None):
+        src = pngs if src is None else src
+        if key in src:
+            doc.add_picture(io.BytesIO(src[key]), width=Inches(w))
 
     def table(headers, rows):
         if not rows:
@@ -976,25 +1047,48 @@ def build_docx(db: Session, product_groups: list[str], lead_advertiser: str | No
                     r.font.size = Pt(8)
 
     if yearly:
-        doc.add_page_break()
-        doc.add_heading(f"{yearly_no}. Year-by-Year Analysis", level=1)
-        doc.add_paragraph("The same category and advertiser breakdown as above, split by year with month-by-month "
-                          "spend. All figures are Com (paid); V/A bonus is reported separately.")
-        for y in yearly:
-            yoy = f"  (YoY {'+' if (y['yoy_pct'] or 0) >= 0 else ''}{y['yoy_pct']}%)" if y["yoy_pct"] is not None else ""
-            doc.add_heading(f"{y['year']} - Total Com {_money(y['total_spend'])}{yoy}", level=2)
-            doc.add_paragraph(f"{y['advertisers_count']} advertisers  |  V/A {y['va_spots']:,} spots, {y['va_seconds']:,.0f}s")
-            chart(f"ym_{y['year']}")
-            mon = y["monthly"]
+        for i, ysum in enumerate(yearly):
+            yr = ysum["year"]
+            ydata = gather(db, product_groups, None, include_research=False, year=yr)
+            ypngs = build_charts(ydata)
+            yov = ydata["overview"]
+            doc.add_page_break()
+            if i == 0:
+                doc.add_heading(f"{yearly_no}. Year-by-Year Full Analysis", level=1)
+                doc.add_paragraph("A complete report for each year using only that year's spots.")
+            yoy = f"  (YoY {'+' if (ysum['yoy_pct'] or 0) >= 0 else ''}{ysum['yoy_pct']}%)" if ysum["yoy_pct"] is not None else ""
+            doc.add_heading(f"{yr}{yoy}", level=1)
+            doc.add_paragraph(f"Total Com {_money(yov['total_spend'])}  |  {yov['advertisers']} advertisers  |  "
+                              f"{yov['channels']} channels  |  {yov['date_from'] or 'n/a'} to {yov['date_to'] or 'n/a'}")
+
+            doc.add_heading("Category Overview", level=2); chart("trend", src=ypngs); chart("medium", 4.2, src=ypngs)
+            cs = ydata["category_split"]
+            if cs and len(cs) > 1:
+                table(["Category", "Spend", "Advertisers", "Share"],
+                      [[c["category"], _money(c["spend"]), c["advertisers"], f"{c['share_pct']}%"] for c in cs])
+            doc.add_heading("Monthly Spend", level=2)
+            mon = ysum["monthly"]
             table(["Month", "Com Spend"],
                   [[nm, _money(sp)] for nm, sp in zip(mon["month_names"] or mon["labels"], mon["spend"])])
-            table(["Medium", "Com Spend", "Share"],
-                  [[m["medium"], _money(m["spend"]), f"{m['share_pct']}%"] for m in y["medium_split"]])
-            table(["Advertiser", "Com Spend", "SOS", "Com Spots"],
-                  [[a["advertiser"], _money(a["spend"]), f"{a['share_pct']}%", a["spots"]] for a in y["advertisers"]])
-            if len(y["category_split"]) > 1:
-                table(["Category", "Com Spend", "Share"],
-                      [[c["category"], _money(c["spend"]), f"{c['share_pct']}%"] for c in y["category_split"]])
+            doc.add_heading("Advertiser Ranking", level=2); chart("ranking", src=ypngs)
+            table(["Advertiser", "Total Spend", "Share"],
+                  [[a["advertiser"], _money(a["spend"]), f"{a['share_pct']}%"] for a in ydata["top_advertisers"]])
+            cmp = ydata["comparison"]
+            if cmp:
+                table(["Advertiser", "Com Spend", "SOS", "TV", "Radio", "Press", "Com Spots", "V/A Spots", "V/A Secs"],
+                      [[c["advertiser"], _money(c["spend"]), f"{c['share_pct']}%", _money(c["tv"]), _money(c["radio"]),
+                        _money(c["press"]), c["com_spots"], c["va_spots"], f"{c['va_seconds']:,.0f}"] for c in cmp])
+            doc.add_heading("Channel Analysis", level=2); chart("channels", src=ypngs)
+            ch_cv = ydata["channel_com_va"]
+            if ch_cv:
+                table(["Channel", "Medium", "Com Spend", "Com Spots", "V/A Spots", "V/A Secs"],
+                      [[c["channel"], c["medium"] or "n/a", _money(c["com_spend"]), c["com_spots"],
+                        c["va_spots"], f"{c['va_seconds']:,.0f}"] for c in ch_cv])
+            bm = ydata["benchmark"]
+            if bm:
+                doc.add_heading("Competitor Benchmark", level=2)
+                table(["Advertiser", "Spend", "Top Medium", "Top Channel"],
+                      [[b["advertiser"], _money(b["spend"]), b["top_medium"] or "n/a", b["top_channel"] or "n/a"] for b in bm])
 
     doc.add_heading(f"{appendix_n}. Appendix", level=1)
     doc.add_paragraph("SOS: advertiser share of total category spend. CPRP: 30s-equivalent rate / TVR. "
@@ -1031,8 +1125,16 @@ _REPORT_CSS = """
 .rp-chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px;}
 .rp-chip{display:inline-block;font-size:11.5px;font-family:var(--mono);background:var(--paper);border:1px solid var(--line2);border-radius:999px;padding:3px 10px;color:var(--ink2);}
 .rp-chip-va{border-color:#C9BEEA;color:#5B49A0;background:#F4F0FC;}
-.rp-year{padding:16px 0;border-top:1px solid var(--line);}
-.rp-year:first-of-type{border-top:none;}
+.rp-yearpage{padding:20px 0 8px;border-top:2px solid var(--graphite);margin-top:26px;}
+.rp-yearpage:first-of-type{border-top:none;margin-top:8px;}
+.rp-yearbanner{display:flex;align-items:center;gap:6px;margin:0 0 14px;}
+.rp-yearnum{font-size:30px;font-weight:700;letter-spacing:-0.02em;color:var(--ink);font-family:var(--mono);}
+.rp-yearpage h3{font-size:14px;color:var(--ink);margin:20px 0 8px;font-weight:600;border-bottom:1px solid var(--line);padding-bottom:5px;}
+.rp-yearpage h4{font-size:12.5px;color:var(--muted);margin:14px 0 6px;font-weight:600;}
+.rp-yearpage .rp-kpis{border:1px solid var(--line2);border-radius:4px;overflow:hidden;margin:0 0 4px;}
+.rp-yearpage .rp-kpi{border-left:1px solid var(--line);}
+.rp-yearpage .rp-kpi span{color:var(--muted);}
+.rp-yearpage .rp-kpi strong{color:var(--ink);}
 .rp-yoy{font-size:12px;font-weight:600;margin-left:8px;}
 .rp-up{color:#1E8E6A;}
 .rp-down{color:#C0392B;}
