@@ -49,6 +49,7 @@ def gather(db: Session, product_groups: list[str], lead_advertiser: str | None, 
         "comparison": ax.advertiser_comparison(db, product_groups, limit=15),
         "yearly": ax.yearly_by_advertiser(db, product_groups, top_n=6),
         "channel_com_va": ax.category_channels_com_va(db, product_groups, limit=12),
+        "channel_detail": ax.top_channel_advertiser_detail(db, product_groups, top_channels=5, top_adv=15),
     }
 
     if lead_advertiser:
@@ -328,6 +329,44 @@ def _research_html(research: dict) -> str:
     return "".join(parts)
 
 
+def _channel_detail_html(detail: dict) -> str:
+    """Top-5-channels detail: an advertiser x channel Com-spend matrix, then a
+    per-channel table of Com (paid) vs V/A (bonus) for each advertiser."""
+    channels = detail.get("channels") or []
+    advs = detail.get("advertisers") or []
+    if not channels or not advs:
+        return ""
+    ch_names = [c["channel"] for c in channels]
+    matrix = detail.get("matrix", {})
+    totals = detail.get("totals", {})
+
+    # Matrix: advertisers (rows) x top channels (cols), Com spend per cell.
+    head = ["Advertiser"] + ch_names + ["Total Com"]
+    rows = []
+    for a in advs:
+        cells = [a]
+        for ch in ch_names:
+            cell = matrix.get(a, {}).get(ch)
+            cells.append(_money(cell["com_spend"]) if cell and cell["com_spend"] else "-")
+        cells.append(_money(totals.get(a, 0)))
+        rows.append(cells)
+    numeric = [False] + [True] * (len(ch_names) + 1)
+    parts = ["<h3>Top 5 channels: how each advertiser spends (Com spend)</h3>",
+             _table(head, rows, numeric)]
+
+    # Per-channel detail with Com + V/A.
+    parts.append("<h3>Channel-by-channel detail (paid vs value addition)</h3>")
+    for c in channels:
+        ch = c["channel"]
+        drows = [[r["advertiser"], _money(r["com_spend"]), r["com_spots"], r["va_spots"], f"{r['va_seconds']:,.0f}"]
+                 for r in detail.get("detail", {}).get(ch, [])]
+        med = f" ({c['medium']})" if c.get("medium") else ""
+        parts.append(f'<h4 class="rp-chsub">{html.escape(ch)}{html.escape(med)} · Com {_money(c["com_spend"])}</h4>')
+        parts.append(_table(["Advertiser", "Com spend", "Com spots", "V/A spots", "V/A secs"],
+                            drows, [False, True, True, True, True]))
+    return "".join(parts)
+
+
 def build_html(db: Session, product_groups: list[str], lead_advertiser: str | None, include_research: bool = False) -> str:
     data = gather(db, product_groups, lead_advertiser, include_research)
     pngs = build_charts(data)
@@ -444,9 +483,13 @@ def build_html(db: Session, product_groups: list[str], lead_advertiser: str | No
                        + _table(["Channel", "Medium", "Com spend", "Com spots", "V/A spots", "V/A secs"],
                                 ch_cv_rows, [False, False, True, True, True, True]))
 
+    # Top 5 channels: how each advertiser spends on each (Com only + V/A).
+    ch_detail_block = _channel_detail_html(data["channel_detail"])
+
     parts.append(f"""<section class="rp-sec"><h2>{base}. Channel analysis</h2>{p(s['channel_analysis'])}
   {_img(pngs.get('channels'))}
   {ch_cv_block}
+  {ch_detail_block}
 </section>
 
 <section class="rp-sec"><h2>{base + 1}. Competitor benchmark</h2>{p(s['competitor'])}
@@ -559,6 +602,26 @@ def build_pdf(db: Session, product_groups: list[str], lead_advertiser: str | Non
         table(["Channel", "Medium", "Com Spend", "Com Spots", "V/A Spots", "V/A Secs"],
               [[c["channel"], c["medium"] or "n/a", _money(c["com_spend"]), c["com_spots"],
                 c["va_spots"], f"{c['va_seconds']:,.0f}"] for c in ch_cv])
+    cd = data["channel_detail"]
+    if cd.get("channels") and cd.get("advertisers"):
+        ch_names = [c["channel"] for c in cd["channels"]]
+        story.append(Paragraph("Top 5 channels: how each advertiser spends (Com spend)", h3))
+        mrows = []
+        for a in cd["advertisers"]:
+            row = [a]
+            for ch in ch_names:
+                cell = cd["matrix"].get(a, {}).get(ch)
+                row.append(_money(cell["com_spend"]) if cell and cell["com_spend"] else "-")
+            row.append(_money(cd["totals"].get(a, 0)))
+            mrows.append(row)
+        table(["Advertiser"] + ch_names + ["Total"], mrows)
+        story.append(Paragraph("Channel-by-channel detail (paid vs value addition)", h3))
+        for c in cd["channels"]:
+            med = f" ({c['medium']})" if c.get("medium") else ""
+            story.append(Paragraph(f"{html.escape(c['channel'])}{html.escape(med)} - Com {_money(c['com_spend'])}", body))
+            table(["Advertiser", "Com Spend", "Com Spots", "V/A Spots", "V/A Secs"],
+                  [[r["advertiser"], _money(r["com_spend"]), r["com_spots"], r["va_spots"], f"{r['va_seconds']:,.0f}"]
+                   for r in cd["detail"].get(c["channel"], [])])
     story.append(Paragraph(f"{n+1}. Competitor Benchmark", h2)); para(s["competitor"])
     table(["Advertiser", "Spend", "Top Medium", "Top Channel"],
           [[b["advertiser"], _money(b["spend"]), b["top_medium"] or "n/a", b["top_channel"] or "n/a"] for b in data["benchmark"]])
@@ -673,6 +736,26 @@ def build_docx(db: Session, product_groups: list[str], lead_advertiser: str | No
         table(["Channel", "Medium", "Com Spend", "Com Spots", "V/A Spots", "V/A Secs"],
               [[c["channel"], c["medium"] or "n/a", _money(c["com_spend"]), c["com_spots"],
                 c["va_spots"], f"{c['va_seconds']:,.0f}"] for c in ch_cv])
+    cd = data["channel_detail"]
+    if cd.get("channels") and cd.get("advertisers"):
+        ch_names = [c["channel"] for c in cd["channels"]]
+        doc.add_heading("Top 5 channels: how each advertiser spends (Com spend)", level=2)
+        mrows = []
+        for a in cd["advertisers"]:
+            row = [a]
+            for ch in ch_names:
+                cell = cd["matrix"].get(a, {}).get(ch)
+                row.append(_money(cell["com_spend"]) if cell and cell["com_spend"] else "-")
+            row.append(_money(cd["totals"].get(a, 0)))
+            mrows.append(row)
+        table(["Advertiser"] + ch_names + ["Total"], mrows)
+        doc.add_heading("Channel-by-channel detail (paid vs value addition)", level=2)
+        for c in cd["channels"]:
+            med = f" ({c['medium']})" if c.get("medium") else ""
+            doc.add_paragraph(f"{c['channel']}{med} - Com {_money(c['com_spend'])}")
+            table(["Advertiser", "Com Spend", "Com Spots", "V/A Spots", "V/A Secs"],
+                  [[r["advertiser"], _money(r["com_spend"]), r["com_spots"], r["va_spots"], f"{r['va_seconds']:,.0f}"]
+                   for r in cd["detail"].get(c["channel"], [])])
     doc.add_heading(f"{n+1}. Competitor Benchmark", level=1); doc.add_paragraph(s["competitor"])
     table(["Advertiser", "Spend", "Top Medium", "Top Channel"],
           [[b["advertiser"], _money(b["spend"]), b["top_medium"] or "n/a", b["top_channel"] or "n/a"] for b in data["benchmark"]])
@@ -733,6 +816,8 @@ _REPORT_CSS = """
 .rp-sec{padding:26px 48px;border-bottom:1px solid var(--line);}
 .rp-sec h2{color:var(--ink);font-size:16px;margin:0 0 12px;font-weight:600;letter-spacing:-0.01em;}
 .rp-sec h3{font-size:12px;color:var(--muted);margin:16px 0 8px;font-weight:600;}
+.rp-sec h4{font-size:12.5px;color:var(--ink);margin:14px 0 6px;font-weight:600;}
+.rp-chsub{border-left:3px solid var(--accent);padding-left:9px;}
 .rp-narr{font-size:14px;line-height:1.62;color:var(--ink2);margin:0 0 14px;max-width:72ch;}
 .rp-muted{color:var(--muted);font-size:12.5px;}
 .rp-chart{width:100%;border:1px solid var(--line);border-radius:4px;margin:8px 0;background:#fff;}

@@ -224,6 +224,74 @@ def category_channels_com_va(db: Session, product_groups=None, limit=12) -> list
     return out[:limit]
 
 
+def top_channel_advertiser_detail(db: Session, product_groups=None, top_channels=5, top_adv=15) -> dict:
+    """For the top N channels (by Com spend) in the category, break down how
+    every advertiser spent on each: Com (paid) spend + spots and V/A (bonus)
+    spots + seconds. Returns a scannable Com-spend matrix plus per-channel
+    detail rows, so the report can show 'who advertises where, paid vs bonus'.
+    """
+    top = category_channels_com_va(db, product_groups, limit=top_channels)
+    channel_names = [c["channel"] for c in top if c["channel"] != "Unknown"]
+    if not channel_names:
+        return {"channels": [], "advertisers": [], "matrix": {}, "detail": {}}
+
+    ch_cond = AdexRow.channel.in_(channel_names)
+
+    com_rows = db.execute(
+        select(AdexRow.channel, AdexRow.advertiser, func.sum(AdexRow.cost), func.count())
+        .where(_where(COM, ch_cond, _pg_filter(product_groups), AdexRow.advertiser.isnot(None)))
+        .group_by(AdexRow.channel, AdexRow.advertiser)
+    ).all()
+    va_rows = db.execute(
+        select(AdexRow.channel, AdexRow.advertiser, func.count(), func.sum(AdexRow.dur))
+        .where(_where(AdexRow.va_com == "V/A", ch_cond, _pg_filter(product_groups), AdexRow.advertiser.isnot(None)))
+        .group_by(AdexRow.channel, AdexRow.advertiser)
+    ).all()
+
+    # matrix[advertiser][channel] = {com_spend, com_spots, va_spots, va_seconds}
+    matrix: dict[str, dict[str, dict]] = {}
+    totals: dict[str, float] = {}
+
+    def _cell(adv, ch):
+        return matrix.setdefault(adv, {}).setdefault(
+            ch, {"com_spend": 0.0, "com_spots": 0, "va_spots": 0, "va_seconds": 0.0}
+        )
+
+    for ch, adv, spend, spots in com_rows:
+        cell = _cell(adv, ch)
+        cell["com_spend"] = round(spend or 0, 2)
+        cell["com_spots"] = spots or 0
+        totals[adv] = totals.get(adv, 0.0) + (spend or 0.0)
+    for ch, adv, spots, secs in va_rows:
+        cell = _cell(adv, ch)
+        cell["va_spots"] = spots or 0
+        cell["va_seconds"] = round(secs or 0, 1)
+        totals.setdefault(adv, 0.0)
+
+    advertisers = sorted(totals, key=lambda a: totals[a], reverse=True)[:top_adv]
+
+    # Per-channel detail rows (only the kept advertisers), each channel ordered
+    # by Com spend.
+    detail: dict[str, list[dict]] = {}
+    for ch in channel_names:
+        rows = []
+        for adv in advertisers:
+            cell = matrix.get(adv, {}).get(ch)
+            if not cell or (cell["com_spend"] == 0 and cell["com_spots"] == 0 and cell["va_spots"] == 0):
+                continue
+            rows.append({"advertiser": adv, **cell})
+        rows.sort(key=lambda x: x["com_spend"], reverse=True)
+        detail[ch] = rows
+
+    return {
+        "channels": top[:len(channel_names)],
+        "advertisers": advertisers,
+        "totals": {a: round(totals[a], 2) for a in advertisers},
+        "matrix": {a: matrix.get(a, {}) for a in advertisers},
+        "detail": detail,
+    }
+
+
 def benchmark(db: Session, product_groups, advertisers: list[str]) -> list[dict]:
     """Per-advertiser comparison row: total spend, top medium, top channel,
     top programme, and medium mix."""
