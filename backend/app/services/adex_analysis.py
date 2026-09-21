@@ -292,6 +292,72 @@ def top_channel_advertiser_detail(db: Session, product_groups=None, top_channels
     }
 
 
+def advertiser_channel_breakdown(db: Session, product_groups=None, advertisers=None,
+                                 top_adv=20, channels_per=12) -> list[dict]:
+    """Per-advertiser page data: for each advertiser in the category, which
+    channels they advertised on and how much, split into Com (paid) spend +
+    spots and V/A (bonus) spots + seconds, plus their medium mix and totals.
+    Ordered by total Com spend; each advertiser's channels ordered the same.
+    """
+    adv_cond = _adv_filter(advertisers)
+
+    com = db.execute(
+        select(AdexRow.advertiser, AdexRow.channel, func.max(AdexRow.medium),
+               func.sum(AdexRow.cost), func.count(), func.sum(AdexRow.dur))
+        .where(_where(COM, _pg_filter(product_groups), adv_cond, AdexRow.advertiser.isnot(None)))
+        .group_by(AdexRow.advertiser, AdexRow.channel)
+    ).all()
+    va = db.execute(
+        select(AdexRow.advertiser, AdexRow.channel, func.count(), func.sum(AdexRow.dur))
+        .where(_where(AdexRow.va_com == "V/A", _pg_filter(product_groups), adv_cond, AdexRow.advertiser.isnot(None)))
+        .group_by(AdexRow.advertiser, AdexRow.channel)
+    ).all()
+
+    # advertiser -> channel -> cell
+    book: dict[str, dict[str, dict]] = {}
+
+    def _cell(adv, ch, medium=None):
+        cells = book.setdefault(adv, {})
+        cell = cells.get(ch)
+        if cell is None:
+            cell = {"channel": ch or "Unknown", "medium": medium,
+                    "com_spend": 0.0, "com_spots": 0, "va_spots": 0, "va_seconds": 0.0}
+            cells[ch] = cell
+        elif medium and not cell["medium"]:
+            cell["medium"] = medium
+        return cell
+
+    for adv, ch, medium, spend, spots, secs in com:
+        cell = _cell(adv, ch, medium)
+        cell["com_spend"] = round(spend or 0, 2)
+        cell["com_spots"] = spots or 0
+    for adv, ch, spots, secs in va:
+        cell = _cell(adv, ch)
+        cell["va_spots"] = spots or 0
+        cell["va_seconds"] = round(secs or 0, 1)
+
+    out = []
+    for adv, cells in book.items():
+        chans = sorted(cells.values(), key=lambda x: x["com_spend"], reverse=True)
+        com_spend = round(sum(c["com_spend"] for c in chans), 2)
+        medium_mix: dict[str, float] = {}
+        for c in chans:
+            if c["com_spend"]:
+                medium_mix[c["medium"] or "Other"] = round(medium_mix.get(c["medium"] or "Other", 0) + c["com_spend"], 2)
+        out.append({
+            "advertiser": adv,
+            "com_spend": com_spend,
+            "com_spots": sum(c["com_spots"] for c in chans),
+            "va_spots": sum(c["va_spots"] for c in chans),
+            "va_seconds": round(sum(c["va_seconds"] for c in chans), 1),
+            "channels_count": len([c for c in chans if c["com_spend"] or c["com_spots"] or c["va_spots"]]),
+            "medium_mix": medium_mix,
+            "channels": chans[:channels_per],
+        })
+    out.sort(key=lambda x: x["com_spend"], reverse=True)
+    return out[:top_adv]
+
+
 def benchmark(db: Session, product_groups, advertisers: list[str]) -> list[dict]:
     """Per-advertiser comparison row: total spend, top medium, top channel,
     top programme, and medium mix."""

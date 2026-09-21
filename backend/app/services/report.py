@@ -50,6 +50,7 @@ def gather(db: Session, product_groups: list[str], lead_advertiser: str | None, 
         "yearly": ax.yearly_by_advertiser(db, product_groups, top_n=6),
         "channel_com_va": ax.category_channels_com_va(db, product_groups, limit=12),
         "channel_detail": ax.top_channel_advertiser_detail(db, product_groups, top_channels=5, top_adv=15),
+        "advertiser_pages": ax.advertiser_channel_breakdown(db, product_groups, top_adv=20, channels_per=12),
     }
 
     if lead_advertiser:
@@ -329,6 +330,35 @@ def _research_html(research: dict) -> str:
     return "".join(parts)
 
 
+def _advertiser_pages_html(pages: list[dict]) -> str:
+    """One block per advertiser: their totals, medium mix, and the channels
+    they advertised on with Com (paid) vs V/A (bonus)."""
+    if not pages:
+        return ""
+    out = []
+    for a in pages:
+        mix = a.get("medium_mix") or {}
+        mix_txt = ", ".join(f"{k} {_money(v)}" for k, v in sorted(mix.items(), key=lambda kv: kv[1], reverse=True))
+        chips = (
+            f'<span class="rp-chip">Com {_money(a["com_spend"])}</span>'
+            f'<span class="rp-chip">{a["com_spots"]:,} Com spots</span>'
+            f'<span class="rp-chip">{a["channels_count"]} channels</span>'
+            f'<span class="rp-chip rp-chip-va">V/A {a["va_spots"]:,} spots · {a["va_seconds"]:,.0f}s</span>'
+        )
+        rows = [[c["channel"], c["medium"] or "n/a", _money(c["com_spend"]), c["com_spots"],
+                 c["va_spots"], f"{c['va_seconds']:,.0f}"] for c in a["channels"]]
+        out.append(
+            f'<div class="rp-adv">'
+            f'<h3 class="rp-advh">{html.escape(a["advertiser"])}</h3>'
+            f'<div class="rp-chips">{chips}</div>'
+            + (f'<p class="rp-narr rp-muted">Medium mix (Com): {html.escape(mix_txt)}.</p>' if mix_txt else "")
+            + _table(["Channel", "Medium", "Com spend", "Com spots", "V/A spots", "V/A secs"],
+                     rows, [False, False, True, True, True, True])
+            + "</div>"
+        )
+    return "".join(out)
+
+
 def _channel_detail_html(detail: dict) -> str:
     """Top-5-channels detail: an advertiser x channel Com-spend matrix, then a
     per-channel table of Com (paid) vs V/A (bonus) for each advertiser."""
@@ -461,18 +491,33 @@ def build_html(db: Session, product_groups: list[str], lead_advertiser: str | No
   <p class="rp-narr rp-muted">Bonus value (V/A) attributed to {html.escape(dd['advertiser'])}: {dd['value_addition']['va_spots']:,} spots, {dd['value_addition']['va_seconds']:,.0f} seconds (excluded from spend).</p>
 </section>""")
 
-    # Section numbering: shift by +1 when a focus advertiser deep-dive exists,
-    # and by another +1 for the optional web-research section.
+    # Section numbering: Channel analysis is `base`; the per-advertiser detail,
+    # competitor benchmark and recommended basket follow, then the optional
+    # web-research section, then the appendix.
     base = 5 if dd else 4
+    adv_pages_html = _advertiser_pages_html(data["advertiser_pages"])
+    has_adv = bool(adv_pages_html)
+    adv_n = base + 1 if has_adv else None
+    bench_n = base + (2 if has_adv else 1)
+    basket_n = bench_n + 1
     research = data.get("research") if include_research else None
+    research_n = basket_n + 1 if research else None
+    appendix_n = (research_n or basket_n) + 1
+
     research_sec = ""
     if research:
-        research_sec = (f'<section class="rp-sec"><h2>{base + 3}. Web market research</h2>'
+        research_sec = (f'<section class="rp-sec"><h2>{research_n}. Web market research</h2>'
                         '<p class="rp-narr rp-muted">External market context (market size, sub-segments, brand shares) '
                         'gathered via Google Search and blended with our internal spend data. Use these tables to compare '
                         'our category picture against the wider market.</p>'
                         f'{_research_html(research)}</section>')
-    appendix_n = base + 4 if research else base + 3
+
+    adv_sec = ""
+    if has_adv:
+        adv_sec = (f'<section class="rp-sec"><h2>{adv_n}. Advertiser detail (channels used)</h2>'
+                   '<p class="rp-narr rp-muted">One page per advertiser in the category: which channels they '
+                   'advertised on and how much, with paid commercial spend (Com) separated from bonus airtime (V/A).</p>'
+                   f'{adv_pages_html}</section>')
 
     ch_cv = data["channel_com_va"]
     ch_cv_block = ""
@@ -492,12 +537,14 @@ def build_html(db: Session, product_groups: list[str], lead_advertiser: str | No
   {ch_detail_block}
 </section>
 
-<section class="rp-sec"><h2>{base + 1}. Competitor benchmark</h2>{p(s['competitor'])}
+{adv_sec}
+
+<section class="rp-sec"><h2>{bench_n}. Competitor benchmark</h2>{p(s['competitor'])}
   {bm_tbl}
   {_img(pngs.get('sov'))}
 </section>
 
-<section class="rp-sec"><h2>{base + 2}. Recommended channel / programme basket</h2>{p(s['recommendation'])}
+<section class="rp-sec"><h2>{basket_n}. Recommended channel / programme basket</h2>{p(s['recommendation'])}
   {_img(pngs.get('cprp'))}
   {_table(["Channel", "Programme", "Avg TVR", "CPRP"], [[b['channel'], b['programme'], b['avg_tvr'], b['cprp']] for b in data['recommended_basket']], [False, False, True, True])}
 </section>
@@ -622,17 +669,40 @@ def build_pdf(db: Session, product_groups: list[str], lead_advertiser: str | Non
             table(["Advertiser", "Com Spend", "Com Spots", "V/A Spots", "V/A Secs"],
                   [[r["advertiser"], _money(r["com_spend"]), r["com_spots"], r["va_spots"], f"{r['va_seconds']:,.0f}"]
                    for r in cd["detail"].get(c["channel"], [])])
-    story.append(Paragraph(f"{n+1}. Competitor Benchmark", h2)); para(s["competitor"])
+    ap = data["advertiser_pages"]
+    bench_no = n + 1
+    if ap:
+        for i, a in enumerate(ap):
+            story.append(PageBreak())
+            if i == 0:
+                story.append(Paragraph(f"{n+1}. Advertiser Detail (channels used)", h2))
+                para("One page per advertiser in the category: which channels they advertised on and how "
+                     "much, with paid commercial spend (Com) separated from bonus airtime (V/A).")
+            story.append(Paragraph(html.escape(a["advertiser"]), h3))
+            mix = a.get("medium_mix") or {}
+            mix_txt = ", ".join(f"{k} {_money(v)}" for k, v in sorted(mix.items(), key=lambda kv: kv[1], reverse=True))
+            story.append(Paragraph(
+                f"Com {_money(a['com_spend'])} &nbsp;|&nbsp; {a['com_spots']:,} Com spots &nbsp;|&nbsp; "
+                f"{a['channels_count']} channels &nbsp;|&nbsp; V/A {a['va_spots']:,} spots, {a['va_seconds']:,.0f}s"
+                + (f" &nbsp;|&nbsp; Medium mix: {html.escape(mix_txt)}" if mix_txt else ""), meta))
+            table(["Channel", "Medium", "Com Spend", "Com Spots", "V/A Spots", "V/A Secs"],
+                  [[c["channel"], c["medium"] or "n/a", _money(c["com_spend"]), c["com_spots"],
+                    c["va_spots"], f"{c['va_seconds']:,.0f}"] for c in a["channels"]])
+        bench_no = n + 2
+
+    basket_no = bench_no + 1
+    story.append(Paragraph(f"{bench_no}. Competitor Benchmark", h2)); para(s["competitor"])
     table(["Advertiser", "Spend", "Top Medium", "Top Channel"],
           [[b["advertiser"], _money(b["spend"]), b["top_medium"] or "n/a", b["top_channel"] or "n/a"] for b in data["benchmark"]])
     chart("sov")
-    story.append(Paragraph(f"{n+2}. Recommended Basket", h2)); para(s["recommendation"]); chart("cprp")
+    story.append(Paragraph(f"{basket_no}. Recommended Basket", h2)); para(s["recommendation"]); chart("cprp")
 
     research = data.get("research") if include_research else None
-    appendix_n = n + 3
+    research_no = basket_no + 1
+    appendix_n = research_no + 1 if research else basket_no + 1
     if research:
         story.append(PageBreak())
-        story.append(Paragraph(f"{n+3}. Web Market Research", h2))
+        story.append(Paragraph(f"{research_no}. Web Market Research", h2))
         para("External market context (market size, sub-segments, brand shares) gathered via Google Search and "
              "blended with our internal spend data.")
         if research.get("error"):
@@ -654,7 +724,6 @@ def build_pdf(db: Session, product_groups: list[str], lead_advertiser: str | Non
             if src:
                 links = ", ".join(f'<a href="{html.escape(x["uri"])}">{html.escape(x["title"])}</a>' for x in src[:12])
                 story.append(Paragraph("Sources: " + links, meta))
-        appendix_n = n + 4
     story.append(Paragraph(f"{appendix_n}. Appendix", h2))
     para("SOS: advertiser share of total category spend. CPRP: 30s-equivalent rate / TVR. "
          "Com is paid airtime; V/A is bonus airtime, excluded from all spend figures.")
@@ -756,16 +825,39 @@ def build_docx(db: Session, product_groups: list[str], lead_advertiser: str | No
             table(["Advertiser", "Com Spend", "Com Spots", "V/A Spots", "V/A Secs"],
                   [[r["advertiser"], _money(r["com_spend"]), r["com_spots"], r["va_spots"], f"{r['va_seconds']:,.0f}"]
                    for r in cd["detail"].get(c["channel"], [])])
-    doc.add_heading(f"{n+1}. Competitor Benchmark", level=1); doc.add_paragraph(s["competitor"])
+    ap = data["advertiser_pages"]
+    bench_no = n + 1
+    if ap:
+        for i, a in enumerate(ap):
+            doc.add_page_break()
+            if i == 0:
+                doc.add_heading(f"{n+1}. Advertiser Detail (channels used)", level=1)
+                doc.add_paragraph("One page per advertiser in the category: which channels they advertised on "
+                                  "and how much, with paid commercial spend (Com) separated from bonus airtime (V/A).")
+            doc.add_heading(a["advertiser"], level=2)
+            mix = a.get("medium_mix") or {}
+            mix_txt = ", ".join(f"{k} {_money(v)}" for k, v in sorted(mix.items(), key=lambda kv: kv[1], reverse=True))
+            doc.add_paragraph(
+                f"Com {_money(a['com_spend'])}  |  {a['com_spots']:,} Com spots  |  {a['channels_count']} channels  |  "
+                f"V/A {a['va_spots']:,} spots, {a['va_seconds']:,.0f}s"
+                + (f"  |  Medium mix: {mix_txt}" if mix_txt else ""))
+            table(["Channel", "Medium", "Com Spend", "Com Spots", "V/A Spots", "V/A Secs"],
+                  [[c["channel"], c["medium"] or "n/a", _money(c["com_spend"]), c["com_spots"],
+                    c["va_spots"], f"{c['va_seconds']:,.0f}"] for c in a["channels"]])
+        bench_no = n + 2
+
+    basket_no = bench_no + 1
+    doc.add_heading(f"{bench_no}. Competitor Benchmark", level=1); doc.add_paragraph(s["competitor"])
     table(["Advertiser", "Spend", "Top Medium", "Top Channel"],
           [[b["advertiser"], _money(b["spend"]), b["top_medium"] or "n/a", b["top_channel"] or "n/a"] for b in data["benchmark"]])
     chart("sov")
-    doc.add_heading(f"{n+2}. Recommended Basket", level=1); doc.add_paragraph(s["recommendation"]); chart("cprp")
+    doc.add_heading(f"{basket_no}. Recommended Basket", level=1); doc.add_paragraph(s["recommendation"]); chart("cprp")
 
     research = data.get("research") if include_research else None
-    appendix_n = n + 3
+    research_no = basket_no + 1
+    appendix_n = research_no + 1 if research else basket_no + 1
     if research:
-        doc.add_heading(f"{n+3}. Web Market Research", level=1)
+        doc.add_heading(f"{research_no}. Web Market Research", level=1)
         doc.add_paragraph("External market context (market size, sub-segments, brand shares) gathered via Google "
                           "Search and blended with our internal spend data.")
         if research.get("error"):
@@ -788,7 +880,6 @@ def build_docx(db: Session, product_groups: list[str], lead_advertiser: str | No
                 sp = doc.add_paragraph("Sources: " + ", ".join(x["title"] for x in src[:12]))
                 for r in sp.runs:
                     r.font.size = Pt(8)
-        appendix_n = n + 4
     doc.add_heading(f"{appendix_n}. Appendix", level=1)
     doc.add_paragraph("SOS: advertiser share of total category spend. CPRP: 30s-equivalent rate / TVR. "
                       "Com is paid airtime; V/A is bonus airtime, excluded from all spend figures.")
@@ -818,6 +909,12 @@ _REPORT_CSS = """
 .rp-sec h3{font-size:12px;color:var(--muted);margin:16px 0 8px;font-weight:600;}
 .rp-sec h4{font-size:12.5px;color:var(--ink);margin:14px 0 6px;font-weight:600;}
 .rp-chsub{border-left:3px solid var(--accent);padding-left:9px;}
+.rp-adv{padding:14px 0;border-top:1px solid var(--line);}
+.rp-adv:first-of-type{border-top:none;}
+.rp-advh{font-size:15px;color:var(--ink);margin:0 0 8px;font-weight:600;}
+.rp-chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px;}
+.rp-chip{display:inline-block;font-size:11.5px;font-family:var(--mono);background:var(--paper);border:1px solid var(--line2);border-radius:999px;padding:3px 10px;color:var(--ink2);}
+.rp-chip-va{border-color:#C9BEEA;color:#5B49A0;background:#F4F0FC;}
 .rp-narr{font-size:14px;line-height:1.62;color:var(--ink2);margin:0 0 14px;max-width:72ch;}
 .rp-muted{color:var(--muted);font-size:12.5px;}
 .rp-chart{width:100%;border:1px solid var(--line);border-radius:4px;margin:8px 0;background:#fff;}
