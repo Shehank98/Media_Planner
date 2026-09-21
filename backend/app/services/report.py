@@ -23,7 +23,7 @@ from . import basket, colors, market
 # --------------------------------------------------------------------------
 # Data
 # --------------------------------------------------------------------------
-def gather(db: Session, product_groups: list[str], lead_advertiser: str | None) -> dict:
+def gather(db: Session, product_groups: list[str], lead_advertiser: str | None, include_research: bool = False) -> dict:
     ov = market.overview(db, product_groups)
     top_adv = ax.top_advertisers(db, product_groups, limit=12)
     total = sum(a["spend"] for a in top_adv) or ov["total_spend"] or 0.0
@@ -46,6 +46,8 @@ def gather(db: Session, product_groups: list[str], lead_advertiser: str | None) 
         "value_addition": ax.value_addition(db, product_groups),
         "growth": market.growth(db, product_groups),
         "category_split": market.top_categories(db, 10),
+        "comparison": ax.advertiser_comparison(db, product_groups, limit=15),
+        "yearly": ax.yearly_by_advertiser(db, product_groups, top_n=6),
     }
 
     if lead_advertiser:
@@ -66,6 +68,20 @@ def gather(db: Session, product_groups: list[str], lead_advertiser: str | None) 
     # Stable colour maps so report charts match the app and each other.
     data["_amap"] = colors.advertiser_colors(db)
     data["_cmap"] = colors.channel_colors(db)
+
+    # Optional web market research (Gemini + Google Search), grounded in our data.
+    if include_research:
+        try:
+            internal = {
+                "category": product_groups,
+                "total_com_spend": ov["total_spend"],
+                "top_advertisers": data["top_advertisers"][:8],
+                "medium_split": data["medium_split"],
+                "date_range": [ov["date_from"], ov["date_to"]],
+            }
+            data["research"] = gemini.category_research(", ".join(product_groups), "Sri Lanka", "Last 3 years", internal)
+        except Exception as exc:  # noqa: BLE001
+            data["research"] = {"error": str(exc)}
     return data
 
 
@@ -116,6 +132,10 @@ def build_charts(data: dict) -> dict[str, bytes]:
     if cs and len(cs) > 1:
         out["categories"] = bar_chart([c["category"] for c in cs], [c["spend"] for c in cs],
                                              title="Spend by category", money=True, single_color=True)
+    yr = data["yearly"]
+    if yr["labels"] and len(yr["labels"]) > 1:
+        out["yearly"] = charts.grouped_bar(yr["labels"], yr["series"], title="Yearly spend by advertiser",
+                                           money=True, colors=acols(list(yr["series"].keys())), dark=False)
     dd = data.get("deep_dive")
     if dd:
         if dd["trend"]["labels"]:
@@ -245,8 +265,70 @@ def _table(headers: list[str], rows: list[list], numeric: list[bool] | None = No
     return f'<table class="rp-table"><thead><tr>{th}</tr></thead><tbody>{trs}</tbody></table>'
 
 
-def build_html(db: Session, product_groups: list[str], lead_advertiser: str | None) -> str:
-    data = gather(db, product_groups, lead_advertiser)
+import re as _re
+
+
+def _md_blocks(md: str):
+    """Parse research markdown into (kind, payload) blocks: h/table/ul/p."""
+    lines = md.split("\n")
+    blocks, i = [], 0
+    cells = lambda r: [c.strip() for c in r.strip().strip("|").split("|")]
+    while i < len(lines):
+        line = lines[i]
+        if _re.match(r"^\s*\|.*\|\s*$", line) and i + 1 < len(lines) and _re.match(r"^\s*\|?[\s:|-]+\|?\s*$", lines[i + 1]):
+            head = cells(line); i += 2; body = []
+            while i < len(lines) and _re.match(r"^\s*\|.*\|\s*$", lines[i]):
+                body.append(cells(lines[i])); i += 1
+            blocks.append(("table", (head, body))); continue
+        m = _re.match(r"^(#{1,6})\s+(.*)", line)
+        if m:
+            blocks.append(("h", (len(m.group(1)), m.group(2).strip()))); i += 1; continue
+        if _re.match(r"^\s*[-*]\s+", line):
+            items = []
+            while i < len(lines) and _re.match(r"^\s*[-*]\s+", lines[i]):
+                items.append(_re.sub(r"^\s*[-*]\s+", "", lines[i]).strip()); i += 1
+            blocks.append(("ul", items)); continue
+        if line.strip():
+            blocks.append(("p", line.strip()))
+        i += 1
+    return blocks
+
+
+def _bold(s: str) -> str:
+    return _re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", html.escape(s))
+
+
+def _strip_md(s: str) -> str:
+    """Plain text: drop bold/italic markers for Word cells and paragraphs."""
+    return _re.sub(r"\*{1,2}(.+?)\*{1,2}", r"\1", s)
+
+
+def _research_html(research: dict) -> str:
+    if research.get("error"):
+        return f'<p class="rp-muted">Web research unavailable: {html.escape(research["error"])}</p>'
+    parts = []
+    for kind, payload in _md_blocks(research.get("markdown", "")):
+        if kind == "h":
+            level, txt = payload
+            parts.append(f"<h3>{_bold(txt)}</h3>" if level <= 2 else f"<h4>{_bold(txt)}</h4>")
+        elif kind == "table":
+            head, body = payload
+            th = "".join(f"<th>{_bold(h)}</th>" for h in head)
+            trs = "".join("<tr>" + "".join(f"<td>{_bold(c)}</td>" for c in r) + "</tr>" for r in body)
+            parts.append(f'<table class="rp-table"><thead><tr>{th}</tr></thead><tbody>{trs}</tbody></table>')
+        elif kind == "ul":
+            parts.append("<ul>" + "".join(f"<li>{_bold(x)}</li>" for x in payload) + "</ul>")
+        else:
+            parts.append(f'<p class="rp-narr">{_bold(payload)}</p>')
+    src = research.get("sources") or []
+    if src:
+        links = " ".join(f'<a href="{html.escape(s["uri"])}">{html.escape(s["title"])}</a>' for s in src[:12])
+        parts.append(f'<p class="rp-muted">Sources: {links}</p>')
+    return "".join(parts)
+
+
+def build_html(db: Session, product_groups: list[str], lead_advertiser: str | None, include_research: bool = False) -> str:
+    data = gather(db, product_groups, lead_advertiser, include_research)
     pngs = build_charts(data)
     s = get_sections(db, data)
     ov = data["overview"]
@@ -286,6 +368,18 @@ def build_html(db: Session, product_groups: list[str], lead_advertiser: str | No
         cat_block = (f'<h3>Category breakdown</h3>{_img(pngs.get("categories"))}'
                      + _table(["Category", "Spend", "Advertisers", "Share"], cat_rows, [False, True, True, True]))
 
+    # advertiser comparison block (spend, SOS, medium mix, V/A) + yearly chart
+    cmp = data["comparison"]
+    cmp_block = ""
+    if cmp:
+        cmp_rows = [[c["advertiser"], _money(c["spend"]), f"{c['share_pct']}%", _money(c["tv"]),
+                     _money(c["radio"]), _money(c["press"]), c["com_spots"], c["va_spots"], f"{c['va_seconds']:,.0f}"]
+                    for c in cmp]
+        cmp_block = ("<h3>Advertiser comparison</h3>"
+                     + (_img(pngs["yearly"]) if pngs.get("yearly") else "")
+                     + _table(["Advertiser", "Com spend", "SOS", "TV", "Radio", "Press", "Com spots", "V/A spots", "V/A secs"],
+                              cmp_rows, [False, True, True, True, True, True, True, True, True]))
+
     parts = [f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Pitch Report - {html.escape(cat)}</title>
@@ -312,6 +406,7 @@ def build_html(db: Session, product_groups: list[str], lead_advertiser: str | No
 <section class="rp-sec"><h2>3. Advertiser ranking (share of spend)</h2>{p(s['advertiser_ranking'])}
   {_img(pngs.get('ranking'))}
   {rank_tbl}
+  {cmp_block}
 </section>"""]
 
     dd = data.get("deep_dive")
@@ -326,21 +421,36 @@ def build_html(db: Session, product_groups: list[str], lead_advertiser: str | No
   <p class="rp-narr rp-muted">Bonus value (V/A) attributed to {html.escape(dd['advertiser'])}: {dd['value_addition']['va_spots']:,} spots, {dd['value_addition']['va_seconds']:,.0f} seconds (excluded from spend).</p>
 </section>""")
 
-    parts.append(f"""<section class="rp-sec"><h2>{'5' if dd else '4'}. Channel analysis</h2>{p(s['channel_analysis'])}
+    # Section numbering: shift by +1 when a focus advertiser deep-dive exists,
+    # and by another +1 for the optional web-research section.
+    base = 5 if dd else 4
+    research = data.get("research") if include_research else None
+    research_sec = ""
+    if research:
+        research_sec = (f'<section class="rp-sec"><h2>{base + 3}. Web market research</h2>'
+                        '<p class="rp-narr rp-muted">External market context (market size, sub-segments, brand shares) '
+                        'gathered via Google Search and blended with our internal spend data. Use these tables to compare '
+                        'our category picture against the wider market.</p>'
+                        f'{_research_html(research)}</section>')
+    appendix_n = base + 4 if research else base + 3
+
+    parts.append(f"""<section class="rp-sec"><h2>{base}. Channel analysis</h2>{p(s['channel_analysis'])}
   {_img(pngs.get('channels'))}
 </section>
 
-<section class="rp-sec"><h2>{'6' if dd else '5'}. Competitor benchmark</h2>{p(s['competitor'])}
+<section class="rp-sec"><h2>{base + 1}. Competitor benchmark</h2>{p(s['competitor'])}
   {bm_tbl}
   {_img(pngs.get('sov'))}
 </section>
 
-<section class="rp-sec"><h2>{'7' if dd else '6'}. Recommended channel / programme basket</h2>{p(s['recommendation'])}
+<section class="rp-sec"><h2>{base + 2}. Recommended channel / programme basket</h2>{p(s['recommendation'])}
   {_img(pngs.get('cprp'))}
   {_table(["Channel", "Programme", "Avg TVR", "CPRP"], [[b['channel'], b['programme'], b['avg_tvr'], b['cprp']] for b in data['recommended_basket']], [False, False, True, True])}
 </section>
 
-<section class="rp-sec rp-appendix"><h2>{'8' if dd else '7'}. Appendix</h2>
+{research_sec}
+
+<section class="rp-sec rp-appendix"><h2>{appendix_n}. Appendix</h2>
   <p class="rp-narr"><strong>Definitions.</strong> SOS (Share of Spend): an advertiser's percentage of total category spend.
   CPRP (Cost Per Rating Point): 30-second-equivalent rate divided by TVR, measuring cost efficiency.
   Com vs V/A: Com is paid commercial airtime; V/A is bonus airtime, excluded from all spend totals and rankings.</p>
@@ -354,14 +464,14 @@ def build_html(db: Session, product_groups: list[str], lead_advertiser: str | No
 # --------------------------------------------------------------------------
 # PDF
 # --------------------------------------------------------------------------
-def build_pdf(db: Session, product_groups: list[str], lead_advertiser: str | None) -> bytes:
+def build_pdf(db: Session, product_groups: list[str], lead_advertiser: str | None, include_research: bool = False) -> bytes:
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import cm
     from reportlab.platypus import (Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle)
 
-    data = gather(db, product_groups, lead_advertiser)
+    data = gather(db, product_groups, lead_advertiser, include_research)
     pngs = build_charts(data)
     s = get_sections(db, data)
     ov = data["overview"]
@@ -371,6 +481,7 @@ def build_pdf(db: Session, product_groups: list[str], lead_advertiser: str | Non
     navy = colors.HexColor("#20242A")
     title = ParagraphStyle("t", parent=styles["Title"], textColor=navy, fontSize=24, spaceAfter=6)
     h2 = ParagraphStyle("h2", parent=styles["Heading2"], textColor=navy, spaceBefore=14)
+    h3 = ParagraphStyle("h3", parent=styles["Heading3"], textColor=navy)
     body = ParagraphStyle("b", parent=styles["BodyText"], fontSize=10.5, leading=15)
     meta = ParagraphStyle("m", parent=styles["BodyText"], fontSize=9, textColor=colors.HexColor("#6b7684"))
 
@@ -412,6 +523,13 @@ def build_pdf(db: Session, product_groups: list[str], lead_advertiser: str | Non
               [[c["category"], _money(c["spend"]), c["advertisers"], f"{c['share_pct']}%"] for c in cs])
     story.append(Paragraph("3. Advertiser Ranking", h2)); para(s["advertiser_ranking"]); chart("ranking")
     table(["Advertiser", "Total Spend", "Share"], [[a["advertiser"], _money(a["spend"]), f"{a['share_pct']}%"] for a in data["top_advertisers"]])
+    cmp = data["comparison"]
+    if cmp:
+        story.append(Paragraph("Advertiser comparison (Com spend, SOS, medium mix, value addition)", h3))
+        chart("yearly")
+        table(["Advertiser", "Com Spend", "SOS", "TV", "Radio", "Press", "Com Spots", "V/A Spots", "V/A Secs"],
+              [[c["advertiser"], _money(c["spend"]), f"{c['share_pct']}%", _money(c["tv"]), _money(c["radio"]),
+                _money(c["press"]), c["com_spots"], c["va_spots"], f"{c['va_seconds']:,.0f}"] for c in cmp])
 
     n = 4
     dd = data.get("deep_dive")
@@ -429,7 +547,35 @@ def build_pdf(db: Session, product_groups: list[str], lead_advertiser: str | Non
           [[b["advertiser"], _money(b["spend"]), b["top_medium"] or "n/a", b["top_channel"] or "n/a"] for b in data["benchmark"]])
     chart("sov")
     story.append(Paragraph(f"{n+2}. Recommended Basket", h2)); para(s["recommendation"]); chart("cprp")
-    story.append(Paragraph(f"{n+3}. Appendix", h2))
+
+    research = data.get("research") if include_research else None
+    appendix_n = n + 3
+    if research:
+        story.append(PageBreak())
+        story.append(Paragraph(f"{n+3}. Web Market Research", h2))
+        para("External market context (market size, sub-segments, brand shares) gathered via Google Search and "
+             "blended with our internal spend data.")
+        if research.get("error"):
+            para(f"Web research unavailable: {research['error']}")
+        else:
+            for kind, payload in _md_blocks(research.get("markdown", "")):
+                if kind == "h":
+                    level, txt = payload
+                    story.append(Paragraph(html.escape(txt), h3 if level > 2 else h2))
+                elif kind == "table":
+                    head, rows = payload
+                    table(head, rows)
+                elif kind == "ul":
+                    for x in payload:
+                        story.append(Paragraph("&bull; " + _bold(x), body))
+                else:
+                    story.append(Paragraph(_bold(payload), body))
+            src = research.get("sources") or []
+            if src:
+                links = ", ".join(f'<a href="{html.escape(x["uri"])}">{html.escape(x["title"])}</a>' for x in src[:12])
+                story.append(Paragraph("Sources: " + links, meta))
+        appendix_n = n + 4
+    story.append(Paragraph(f"{appendix_n}. Appendix", h2))
     para("SOS: advertiser share of total category spend. CPRP: 30s-equivalent rate / TVR. "
          "Com is paid airtime; V/A is bonus airtime, excluded from all spend figures.")
     va = data["value_addition"]
@@ -444,11 +590,11 @@ def build_pdf(db: Session, product_groups: list[str], lead_advertiser: str | Non
 # --------------------------------------------------------------------------
 # Word
 # --------------------------------------------------------------------------
-def build_docx(db: Session, product_groups: list[str], lead_advertiser: str | None) -> bytes:
+def build_docx(db: Session, product_groups: list[str], lead_advertiser: str | None, include_research: bool = False) -> bytes:
     from docx import Document
     from docx.shared import Inches, Pt, RGBColor
 
-    data = gather(db, product_groups, lead_advertiser)
+    data = gather(db, product_groups, lead_advertiser, include_research)
     pngs = build_charts(data)
     s = get_sections(db, data)
     ov = data["overview"]
@@ -487,6 +633,12 @@ def build_docx(db: Session, product_groups: list[str], lead_advertiser: str | No
               [[c["category"], _money(c["spend"]), c["advertisers"], f"{c['share_pct']}%"] for c in cs])
     doc.add_heading("3. Advertiser Ranking", level=1); doc.add_paragraph(s["advertiser_ranking"]); chart("ranking")
     table(["Advertiser", "Total Spend", "Share"], [[a["advertiser"], _money(a["spend"]), f"{a['share_pct']}%"] for a in data["top_advertisers"]])
+    cmp = data["comparison"]
+    if cmp:
+        doc.add_heading("Advertiser comparison", level=2); chart("yearly")
+        table(["Advertiser", "Com Spend", "SOS", "TV", "Radio", "Press", "Com Spots", "V/A Spots", "V/A Secs"],
+              [[c["advertiser"], _money(c["spend"]), f"{c['share_pct']}%", _money(c["tv"]), _money(c["radio"]),
+                _money(c["press"]), c["com_spots"], c["va_spots"], f"{c['va_seconds']:,.0f}"] for c in cmp])
 
     n = 4
     dd = data.get("deep_dive")
@@ -503,7 +655,35 @@ def build_docx(db: Session, product_groups: list[str], lead_advertiser: str | No
           [[b["advertiser"], _money(b["spend"]), b["top_medium"] or "n/a", b["top_channel"] or "n/a"] for b in data["benchmark"]])
     chart("sov")
     doc.add_heading(f"{n+2}. Recommended Basket", level=1); doc.add_paragraph(s["recommendation"]); chart("cprp")
-    doc.add_heading(f"{n+3}. Appendix", level=1)
+
+    research = data.get("research") if include_research else None
+    appendix_n = n + 3
+    if research:
+        doc.add_heading(f"{n+3}. Web Market Research", level=1)
+        doc.add_paragraph("External market context (market size, sub-segments, brand shares) gathered via Google "
+                          "Search and blended with our internal spend data.")
+        if research.get("error"):
+            doc.add_paragraph(f"Web research unavailable: {research['error']}")
+        else:
+            for kind, payload in _md_blocks(research.get("markdown", "")):
+                if kind == "h":
+                    level, txt = payload
+                    doc.add_heading(_strip_md(txt), level=min(level + 1, 4))
+                elif kind == "table":
+                    head, rows = payload
+                    table([_strip_md(h) for h in head], [[_strip_md(c) for c in r] for r in rows])
+                elif kind == "ul":
+                    for x in payload:
+                        doc.add_paragraph(_strip_md(x), style="List Bullet")
+                else:
+                    doc.add_paragraph(_strip_md(payload))
+            src = research.get("sources") or []
+            if src:
+                sp = doc.add_paragraph("Sources: " + ", ".join(x["title"] for x in src[:12]))
+                for r in sp.runs:
+                    r.font.size = Pt(8)
+        appendix_n = n + 4
+    doc.add_heading(f"{appendix_n}. Appendix", level=1)
     doc.add_paragraph("SOS: advertiser share of total category spend. CPRP: 30s-equivalent rate / TVR. "
                       "Com is paid airtime; V/A is bonus airtime, excluded from all spend figures.")
     va = data["value_addition"]

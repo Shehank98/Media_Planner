@@ -207,6 +207,76 @@ def benchmark(db: Session, product_groups, advertisers: list[str]) -> list[dict]
     return out
 
 
+def advertiser_comparison(db: Session, product_groups=None, limit=15) -> list[dict]:
+    """Side-by-side comparison of every advertiser in the selected category:
+    Com spend, share %, TV/Radio/Press split, and V/A bonus. This is the
+    'compare the 3 banks' view."""
+    total = db.execute(select(func.sum(AdexRow.cost)).where(_where(COM, _pg_filter(product_groups)))).scalar() or 0.0
+
+    # spend per advertiser + medium
+    med = {}
+    for a, m, s in db.execute(
+        select(AdexRow.advertiser, AdexRow.medium, func.sum(AdexRow.cost))
+        .where(_where(COM, _pg_filter(product_groups))).group_by(AdexRow.advertiser, AdexRow.medium)
+    ).all():
+        if not a:
+            continue
+        med.setdefault(a, {})[m or "Other"] = round(s or 0, 2)
+
+    # spots per advertiser (Com) and V/A per advertiser
+    spots = dict(db.execute(
+        select(AdexRow.advertiser, func.count()).where(_where(COM, _pg_filter(product_groups))).group_by(AdexRow.advertiser)
+    ).all())
+    va = {a: (n, round(sec or 0, 1)) for a, n, sec in db.execute(
+        select(AdexRow.advertiser, func.count(), func.sum(AdexRow.dur))
+        .where(_where(AdexRow.va_com == "V/A", _pg_filter(product_groups))).group_by(AdexRow.advertiser)
+    ).all() if a}
+
+    out = []
+    for a, mm in med.items():
+        spend = round(sum(mm.values()), 2)
+        out.append({
+            "advertiser": a,
+            "spend": spend,
+            "share_pct": round(100 * spend / total, 1) if total else 0.0,
+            "tv": mm.get("TV", 0.0),
+            "radio": mm.get("Radio", 0.0),
+            "press": mm.get("Press", 0.0),
+            "com_spots": spots.get(a, 0),
+            "va_spots": va.get(a, (0, 0))[0],
+            "va_seconds": va.get(a, (0, 0))[1],
+        })
+    out.sort(key=lambda x: x["spend"], reverse=True)
+    return out[:limit]
+
+
+def yearly_by_advertiser(db: Session, product_groups=None, top_n=6) -> dict:
+    """Spend by YEAR per top advertiser -> {labels:[years], series:{adv:[...]}}
+    plus a flat matrix for tabular comparison."""
+    y = cast(extract("year", AdexRow.spot_date), Integer)
+    top = [a for (a,) in db.execute(
+        select(AdexRow.advertiser).where(_where(COM, _pg_filter(product_groups)))
+        .group_by(AdexRow.advertiser).order_by(func.sum(AdexRow.cost).desc()).limit(top_n)
+    ).all() if a]
+    if not top:
+        return {"labels": [], "series": {}, "years": []}
+    rows = db.execute(
+        select(y, AdexRow.advertiser, func.sum(AdexRow.cost))
+        .where(_where(COM, AdexRow.spot_date.isnot(None), AdexRow.advertiser.in_(top), _pg_filter(product_groups)))
+        .group_by(y, AdexRow.advertiser)
+    ).all()
+    years = sorted({int(r[0]) for r in rows})
+    series = {a: {} for a in top}
+    for yr, adv, s in rows:
+        series[adv][int(yr)] = round(s or 0, 2)
+    labels = [str(v) for v in years]
+    return {
+        "labels": labels,
+        "years": years,
+        "series": {a: [series[a].get(v, 0) for v in years] for a in top},
+    }
+
+
 def channel_analysis(db: Session, channel: str, product_groups=None, top=10) -> dict:
     """Within a category, who spends most on a channel and on which programmes."""
     base = [COM, AdexRow.channel == channel, _pg_filter(product_groups)]

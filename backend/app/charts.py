@@ -241,6 +241,33 @@ def pie_chart(labels, values, title="", color_kind="name", colors=None, dark=Tru
     return _finish(fig, th)
 
 
+def grouped_bar(categories, groups, title="", ylabel="", money=False, color_kind="name", colors=None, dark=True) -> bytes:
+    """Clustered bars: categories on x (e.g. years), one bar per group
+    (e.g. advertiser), coloured consistently by group name."""
+    if not categories or not groups:
+        return _empty(title, dark)
+    import numpy as np
+
+    fig, ax, th = _new((9, 4.8), dark)
+    names = list(groups.keys())
+    cols = colors if colors is not None else _colors(names, color_kind)
+    x = np.arange(len(categories))
+    n = max(len(groups), 1)
+    width = 0.8 / n
+    for i, (name, vals) in enumerate(groups.items()):
+        ax.bar(x + i * width - 0.4 + width / 2, [v or 0 for v in vals], width, label=name, color=cols[i])
+    ax.set_xticks(x)
+    ax.set_xticklabels(categories, color=th["text"])
+    ax.grid(False); ax.grid(axis="y", color=th["grid"], linewidth=1.0)
+    ax.set_axisbelow(True)
+    if money:
+        ax.yaxis.set_major_formatter(FuncFormatter(_thousands))
+    ax.set_ylabel(ylabel)
+    ax.legend(frameon=False, ncol=min(len(groups), 4), fontsize=9, labelcolor=th["text"])
+    _style(ax, th, title)
+    return _finish(fig, th)
+
+
 def heatmap(rows, cols, matrix, title="", money=True, dark=True) -> bytes:
     if not rows or not cols:
         return _empty(title, dark)

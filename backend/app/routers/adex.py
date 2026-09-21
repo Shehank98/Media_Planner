@@ -84,6 +84,23 @@ def value_addition(
     return adex_analysis.value_addition(db, product_groups, advertisers)
 
 
+@router.get("/advertiser-comparison")
+def advertiser_comparison(product_groups: list[str] | None = Query(None), db: Session = Depends(get_db)):
+    return {
+        "comparison": adex_analysis.advertiser_comparison(db, product_groups),
+        "yearly": adex_analysis.yearly_by_advertiser(db, product_groups),
+    }
+
+
+@router.get("/charts/yearly-comparison.png")
+def chart_yearly(product_groups: list[str] | None = Query(None), db: Session = Depends(get_db)):
+    data = adex_analysis.yearly_by_advertiser(db, product_groups, top_n=6)
+    amap = colors_svc.advertiser_colors(db)
+    png = charts.grouped_bar(data["labels"], data["series"], title="", money=True,
+                             colors=[amap.get(n, charts.OTHERS) for n in data["series"].keys()])
+    return Response(png, media_type="image/png")
+
+
 # --- Charts (server-side PNG) ---------------------------------------------
 @router.get("/charts/medium-split.png")
 def chart_medium(product_groups: list[str] | None = Query(None), advertisers: list[str] | None = Query(None), db: Session = Depends(get_db)):
@@ -167,27 +184,33 @@ def category_research(body: dict = Body(...), db: Session = Depends(get_db)):
 
 # --- Report export --------------------------------------------------------
 @router.get("/report/preview", response_class=HTMLResponse)
-def report_preview(product_groups: list[str] = Query(...), lead_advertiser: str | None = None, db: Session = Depends(get_db)):
+def report_preview(
+    product_groups: list[str] = Query(...),
+    lead_advertiser: str | None = None,
+    include_research: bool = False,
+    db: Session = Depends(get_db),
+):
     if not product_groups:
         raise HTTPException(400, "product_groups is required")
-    return HTMLResponse(report.build_html(db, product_groups, lead_advertiser))
+    return HTMLResponse(report.build_html(db, product_groups, lead_advertiser, include_research))
 
 
 @router.post("/report")
 def report_export(body: dict = Body(...), db: Session = Depends(get_db)):
     pgs = body.get("product_groups") or []
     lead = body.get("lead_advertiser")
+    research = bool(body.get("include_research"))
     fmt = (body.get("format") or "pdf").lower()
     if not pgs:
         raise HTTPException(400, "product_groups is required")
     if fmt == "docx":
-        data = report.build_docx(db, pgs, lead)
+        data = report.build_docx(db, pgs, lead, research)
         return Response(
             data,
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             headers={"Content-Disposition": "attachment; filename=pitch-report.docx"},
         )
-    data = report.build_pdf(db, pgs, lead)
+    data = report.build_pdf(db, pgs, lead, research)
     return Response(data, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=pitch-report.pdf"})
 
 

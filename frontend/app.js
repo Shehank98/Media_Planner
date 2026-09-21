@@ -329,6 +329,18 @@ async function runTab1() {
       chartFragment("Top advertisers", "/api/tab1/charts/top-advertisers.png?" + pgQuery),
       tableFragment("Top advertisers", ["Advertiser", "Spend", "Spots"], top.map((t) => [t.advertiser, money(t.spend), t.spots]))
     ));
+
+    // Advertiser comparison: compare every advertiser in the category side by side.
+    const cmp = await api("/api/tab1/advertiser-comparison?" + pgQuery);
+    if (cmp.comparison.length) {
+      if (cmp.yearly.labels.length) box.append(chartCard("Yearly spend by advertiser", "/api/tab1/charts/yearly-comparison.png?" + pgQuery));
+      const cc = el("div", { class: "card" });
+      cc.append(el("div", { class: "section-title" }, "Advertiser comparison — spend, SOS, medium mix, V/A"));
+      cc.append(tableFragment("",
+        ["Advertiser", "Com spend", "SOS %", "TV", "Radio", "Press", "Com spots", "V/A spots", "V/A secs"],
+        cmp.comparison.map((c) => [c.advertiser, money(c.spend), num(c.share_pct, 1) + "%", money(c.tv), money(c.radio), money(c.press), c.com_spots, c.va_spots, num(c.va_seconds, 0)])));
+      box.append(cc);
+    }
     box.append(chartCard("Advertiser spend heatmap (by month)", "/api/market/charts/heatmap.png?" + pgQuery));
     box.append(chartCard("Biggest movers", "/api/market/charts/growth.png?" + pgQuery));
 
@@ -382,17 +394,18 @@ async function exportReport(fmt) {
   const pgs = selected("#t1-groups");
   if (!pgs.length) return toast("Pick a product group first", true);
   const advs = selected("#t1-advertisers");
+  const research = $("#t1-report-research")?.checked || false;
   if (fmt === "preview") {
-    const url = "/api/tab1/report/preview?" + qs({ product_groups: pgs, lead_advertiser: advs[0] || "" });
+    const url = "/api/tab1/report/preview?" + qs({ product_groups: pgs, lead_advertiser: advs[0] || "", include_research: research });
     window.open(url, "_blank");
     return;
   }
-  toast("Generating report, this can take a moment…");
+  toast(research ? "Generating report with web research, this can take a moment…" : "Generating report, this can take a moment…");
   try {
     const res = await fetch("/api/tab1/report", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ product_groups: pgs, lead_advertiser: advs[0] || null, format: fmt }),
+      body: JSON.stringify({ product_groups: pgs, lead_advertiser: advs[0] || null, format: fmt, include_research: research }),
     });
     if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
     downloadBlob(await res.blob(), fmt === "docx" ? "pitch-report.docx" : "pitch-report.pdf");
